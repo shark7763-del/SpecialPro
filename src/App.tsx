@@ -13,6 +13,11 @@ type Tab = '首頁' | '學生' | '紀錄' | 'IEP' | '報表'
 
 const tabs: Tab[] = ['首頁', '學生', '紀錄', 'IEP', '報表']
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
+}
+
 const statusLabel: Record<StudentStatus, string> = {
   stable: '穩定',
   observe: '需觀察',
@@ -81,7 +86,7 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   )
 }
 
-function Header({ role, setRole, onReset, syncResult, onPushSync, onPullSync }: { role: Role; setRole: (role: Role) => void; onReset: () => void; syncResult: SyncResult | null; onPushSync: () => void; onPullSync: () => void }) {
+function Header({ role, setRole, onReset, syncResult, onPushSync, onPullSync, canInstall, isInstalled, onInstall }: { role: Role; setRole: (role: Role) => void; onReset: () => void; syncResult: SyncResult | null; onPushSync: () => void; onPullSync: () => void; canInstall: boolean; isInstalled: boolean; onInstall: () => void }) {
   return (
     <header className="space-y-4">
       <div className="rounded-b-[2rem] bg-gradient-to-br from-teal-700 to-sky-700 px-5 py-7 text-white shadow-sm">
@@ -95,6 +100,9 @@ function Header({ role, setRole, onReset, syncResult, onPushSync, onPullSync }: 
         </div>
       </div>
       <div className="px-4">
+        <button onClick={onInstall} className={`mb-3 w-full rounded-2xl px-4 py-4 text-base font-black shadow-sm ${isInstalled ? 'bg-emerald-50 text-emerald-800' : canInstall ? 'bg-teal-600 text-white' : 'bg-sky-50 text-sky-800'}`}>
+          {isInstalled ? 'App 已安裝' : canInstall ? '安裝 App' : '如何加入手機主畫面'}
+        </button>
         <RoleSwitcher role={role} setRole={setRole} />
         <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between gap-3">
@@ -518,9 +526,31 @@ export default function App() {
   const [role, setRole] = useState<Role>('特教導師')
   const [tab, setTab] = useState<Tab>('首頁')
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [installMessage, setInstallMessage] = useState('')
+  const [isInstalled, setIsInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches || ('standalone' in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone)))
 
   useEffect(() => saveStudents(students), [students])
   useEffect(() => saveRecords(records), [records])
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault()
+      setInstallPrompt(event as BeforeInstallPromptEvent)
+      setInstallMessage('')
+    }
+    const handleInstalled = () => {
+      setIsInstalled(true)
+      setInstallPrompt(null)
+      setInstallMessage('App 已安裝完成。')
+    }
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+    window.addEventListener('appinstalled', handleInstalled)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+      window.removeEventListener('appinstalled', handleInstalled)
+    }
+  }, [])
 
   const page = useMemo(() => {
     const addRecord = (record: CaseRecord) => setRecords((prev) => [{ ...record, status: 'confirmed', confirmedAt: todayParts().iso }, ...prev])
@@ -580,10 +610,26 @@ export default function App() {
     setSyncResult(result)
   }
 
+  const handleInstall = async () => {
+    if (isInstalled) {
+      setInstallMessage('這台裝置已用 App 模式開啟。')
+      return
+    }
+    if (installPrompt) {
+      await installPrompt.prompt()
+      const choice = await installPrompt.userChoice
+      setInstallPrompt(null)
+      setInstallMessage(choice.outcome === 'accepted' ? 'App 安裝已開始。' : '你已取消安裝，可稍後再試。')
+      return
+    }
+    setInstallMessage('iPhone/iPad 請按瀏覽器分享按鈕，選「加入主畫面」。Chrome 桌機可按網址列右側的安裝圖示。')
+  }
+
   return (
     <div className="min-h-screen bg-[#f6f7f4] pb-24 text-slate-900">
       <div className="mx-auto max-w-3xl">
-        <Header role={role} setRole={setRole} onReset={handleReset} syncResult={syncResult} onPushSync={handlePushSync} onPullSync={handlePullSync} />
+        <Header role={role} setRole={setRole} onReset={handleReset} syncResult={syncResult} onPushSync={handlePushSync} onPullSync={handlePullSync} canInstall={Boolean(installPrompt)} isInstalled={isInstalled} onInstall={handleInstall} />
+        {installMessage && <div className="mx-4 mt-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold leading-6 text-sky-900">{installMessage}</div>}
         <div className="mt-5">{page}</div>
       </div>
       <BottomNav tab={tab} setTab={setTab} />
