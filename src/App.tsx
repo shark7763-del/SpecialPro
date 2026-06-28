@@ -122,7 +122,7 @@ function Header({ role, setRole, onReset, syncResult, onPushSync, onPullSync, ca
           </div>
           {syncResult && <p className={`mt-2 text-xs font-semibold ${syncResult.ok ? 'text-teal-700' : 'text-rose-700'}`}>{syncResult.message}</p>}
         </div>
-        <button onClick={onReset} className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">重設 demo data</button>
+        <button onClick={onReset} className="mt-3 w-full rounded-2xl border-2 border-amber-300 bg-amber-50 px-4 py-4 text-base font-black text-amber-900 shadow-sm">重設本機 demo data</button>
       </div>
     </header>
   )
@@ -593,6 +593,7 @@ export default function App() {
     setStudents(loadStudents())
     setRecords(loadRecords())
     setTab('首頁')
+    setSyncResult({ ok: true, message: '已重設本機 demo data。若要覆蓋 Supabase 後台，請再按「上傳後台」。' })
   }
 
   const handlePushSync = async () => {
