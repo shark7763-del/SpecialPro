@@ -4,6 +4,8 @@ import { generateFormalRecord, generateIEPDraft, generateParentMessage, generate
 import { buildReport, downloadText, studentsToCsv } from './services/exportService'
 import { canEditRecords, canSeeSensitive, parentSafeText, visibleRecords, visibleStudents } from './services/permissionService'
 import { loadRecords, loadStudents, resetDemoData, saveRecords, saveStudents } from './services/storageService'
+import { isSupabaseConfigured } from './services/supabaseClient'
+import { pullFromSupabase, pushToSupabase, type SyncResult } from './services/syncService'
 import { recordTypes, reportTypes, roles, usageTags } from './utils/constants'
 import type { IEPDraft, Record as CaseRecord, RecordType, Role, Student, StudentStatus, UsageTag } from './types'
 
@@ -79,7 +81,7 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   )
 }
 
-function Header({ role, setRole, onReset }: { role: Role; setRole: (role: Role) => void; onReset: () => void }) {
+function Header({ role, setRole, onReset, syncResult, onPushSync, onPullSync }: { role: Role; setRole: (role: Role) => void; onReset: () => void; syncResult: SyncResult | null; onPushSync: () => void; onPullSync: () => void }) {
   return (
     <header className="space-y-4">
       <div className="rounded-b-[2rem] bg-gradient-to-br from-teal-700 to-sky-700 px-5 py-7 text-white shadow-sm">
@@ -94,6 +96,24 @@ function Header({ role, setRole, onReset }: { role: Role; setRole: (role: Role) 
       </div>
       <div className="px-4">
         <RoleSwitcher role={role} setRole={setRole} />
+        <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-black text-slate-900">後台同步</p>
+              <p className={`mt-1 text-xs font-semibold ${isSupabaseConfigured ? 'text-teal-700' : 'text-amber-700'}`}>
+                {isSupabaseConfigured ? 'Supabase 已設定' : '尚未設定 Supabase，現在使用本機儲存'}
+              </p>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${isSupabaseConfigured ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-700'}`}>
+              {isSupabaseConfigured ? '可同步' : '離線'}
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button onClick={onPushSync} className="rounded-xl bg-teal-600 px-3 py-3 text-sm font-bold text-white">上傳後台</button>
+            <button onClick={onPullSync} className="rounded-xl bg-slate-100 px-3 py-3 text-sm font-bold text-slate-800">下載後台</button>
+          </div>
+          {syncResult && <p className={`mt-2 text-xs font-semibold ${syncResult.ok ? 'text-teal-700' : 'text-rose-700'}`}>{syncResult.message}</p>}
+        </div>
         <button onClick={onReset} className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">重設 demo data</button>
       </div>
     </header>
@@ -497,6 +517,7 @@ export default function App() {
   const [records, setRecords] = useState<CaseRecord[]>(() => loadRecords())
   const [role, setRole] = useState<Role>('特教導師')
   const [tab, setTab] = useState<Tab>('首頁')
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
 
   useEffect(() => saveStudents(students), [students])
   useEffect(() => saveRecords(records), [records])
@@ -544,10 +565,25 @@ export default function App() {
     setTab('首頁')
   }
 
+  const handlePushSync = async () => {
+    setSyncResult({ ok: true, message: '同步中...' })
+    setSyncResult(await pushToSupabase(students, records, role))
+  }
+
+  const handlePullSync = async () => {
+    setSyncResult({ ok: true, message: '下載中...' })
+    const { result, students: remoteStudents, records: remoteRecords } = await pullFromSupabase()
+    if (result.ok && remoteStudents && remoteRecords) {
+      setStudents(remoteStudents)
+      setRecords(remoteRecords)
+    }
+    setSyncResult(result)
+  }
+
   return (
     <div className="min-h-screen bg-[#f6f7f4] pb-24 text-slate-900">
       <div className="mx-auto max-w-3xl">
-        <Header role={role} setRole={setRole} onReset={handleReset} />
+        <Header role={role} setRole={setRole} onReset={handleReset} syncResult={syncResult} onPushSync={handlePushSync} onPullSync={handlePullSync} />
         <div className="mt-5">{page}</div>
       </div>
       <BottomNav tab={tab} setTab={setTab} />
