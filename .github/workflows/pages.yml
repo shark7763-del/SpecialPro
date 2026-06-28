@@ -33,6 +33,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
+          VITE_APP_MODE: ${{ vars.VITE_APP_MODE }}
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
 

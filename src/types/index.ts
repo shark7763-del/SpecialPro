@@ -1,4 +1,10 @@
-export type Role = '特教導師' | '特教組長' | '普通班導師' | '科任老師' | '家長'
+export type Role = '特教導師' | '特教組長' | '普通班導師' | '科任老師' | '家長' | '系統管理員'
+
+export type RoleCode = 'special_teacher' | 'special_chair' | 'homeroom_teacher' | 'subject_teacher' | 'parent' | 'admin'
+
+export type RecordStatus = 'ai_draft' | 'teacher_draft' | 'confirmed' | 'archived'
+
+export type RecordVisibility = 'special_only' | 'staff_limited' | 'parent_safe'
 
 export type StudentStatus = 'stable' | 'observe' | 'support' | 'urgent'
 
@@ -58,10 +64,12 @@ export interface Record {
   followUp: string
   parentNotified: boolean
   usageTags: UsageTag[]
-  status: 'draft' | 'confirmed'
+  status: RecordStatus
   createdBy: Role
   createdAt: string
   confirmedAt?: string
+  visibility?: RecordVisibility
+  confirmedBy?: Role | string
 }
 
 export interface IEPGoal {
@@ -75,6 +83,10 @@ export interface IEPGoal {
   evaluationMethod: string[]
   aiDraft: string
   confirmed: boolean
+  createdBy?: Role | string
+  confirmedBy?: Role | string
+  createdAt?: string
+  confirmedAt?: string
   updatedAt: string
 }
 

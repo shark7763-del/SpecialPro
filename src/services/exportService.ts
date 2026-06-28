@@ -1,14 +1,26 @@
-import type { Record, Student } from '../types'
+import type { Record, Role, Student } from '../types'
 import { generateSemesterSummary } from './aiService'
+import { maskStudentForRole, parentSafeText } from './permissionService'
 
-export function buildReport(type: string, student: Student, records: Record[]) {
+export function buildReport(type: string, student: Student, records: Record[], role: Role = '特教導師') {
+  const safeStudent = maskStudentForRole(student, role)
   const confirmed = records.filter((record) => record.studentId === student.id && record.status === 'confirmed')
   const lines = [
     `資料類型：${type}`,
-    `學生：${student.name}｜${student.className}`,
+    `學生：${safeStudent.name}｜${safeStudent.className}`,
     '提醒：請確認資料使用範圍，避免分享給無關人員。',
     '',
   ]
+
+  if (role === '家長') {
+    lines.push(parentSafeText(`家長版摘要：孩子目前正在練習${student.mainNeeds.join('、')}。學校會持續協助，並以必要範圍提供說明。`))
+    return lines.join('\n')
+  }
+
+  if (role === '普通班導師' || role === '科任老師') {
+    lines.push(`普通班提醒卡：${student.regularClassTips.join('、')}`, `評量調整：${student.assessmentAdjustments.note}`)
+    return lines.join('\n')
+  }
 
   if (type === '交接資料包') {
     lines.push(
@@ -19,7 +31,7 @@ export function buildReport(type: string, student: Student, records: Record[]) {
       `家長溝通注意事項：以溫和、具體、可配合的文字說明`,
       `評量調整：${student.assessmentAdjustments.note}`,
       `支持服務：${student.supportServices.map((service) => `${service.type}(${service.status})`).join('、')}`,
-      `本學期摘要：${generateSemesterSummary(student, confirmed)}`,
+      `本學期摘要：${generateSemesterSummary(safeStudent, confirmed)}`,
       '下一位老師注意事項：延續有效策略，前兩週密集觀察適應狀況。',
     )
   } else if (type === '會議前資料包') {
