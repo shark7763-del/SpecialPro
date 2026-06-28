@@ -33,10 +33,13 @@ alter table public.sync_audit_logs enable row level security;
 
 drop policy if exists "demo read students" on public.students;
 drop policy if exists "demo write students" on public.students;
+drop policy if exists "demo update students" on public.students;
 drop policy if exists "demo read records" on public.records;
 drop policy if exists "demo write records" on public.records;
+drop policy if exists "demo update records" on public.records;
 drop policy if exists "demo read assessment adjustments" on public.assessment_adjustments;
 drop policy if exists "demo write assessment adjustments" on public.assessment_adjustments;
+drop policy if exists "demo update assessment adjustments" on public.assessment_adjustments;
 drop policy if exists "demo write audit logs" on public.sync_audit_logs;
 
 create policy "demo read students" on public.students for select to anon using (true);
