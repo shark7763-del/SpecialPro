@@ -180,6 +180,8 @@ values (
 - 家長：只能看自己孩子的 parent-safe 內容，不看敏感紀錄。
 - 匯出：匯出前必須確認個資提醒，依角色遮蔽。
 - PWA：更新後會清舊 cache，前端顯示新版本提示。
+- 名單管理：`admin` / `special_chair` 可建立學生、profile、授權綁定與 CSV 匯入。
+- 妥善率檢查：`admin` / `special_chair` 可查看校園小範圍測試前的安全檢查結果。
 
 ## 明確警告
 
@@ -190,6 +192,14 @@ demo 模式不可輸入真實學生資料。
 ## 目前仍是 Demo / 待正式化項目
 
 - demo 模式仍使用 localStorage 與 mock data。
-- school_test 已加 Auth/RLS schema 與前端登入閘門，但完整新增學生後台表單尚未建立。
+- `school_test` 已有 Auth/RLS schema、登入閘門、名單管理、今日待辦、妥善率檢查與 parent-safe 顯示，但仍屬內部測試版。
 - 真正 OpenAI API 尚未接入，目前仍是 AI 模擬函式。
-- audit log schema 已建立，前端匯出/確認流程仍需進一步接 Supabase insert audit log。
+- audit log 已經串接登入、查看個案、草稿定稿、教師回饋、匯出等主要流程，但仍建議在正式上線前再做完整稽核與權限壓測。
+
+## 目前可直接參考的相容檔
+
+- `src/lib/supabase.ts`
+- `src/services/supabaseService.ts`
+- `src/types.ts`
+
+這三個檔案是為了相容既有檢查與引用路徑所加的轉接檔，不是新的資料來源。

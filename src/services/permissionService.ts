@@ -9,16 +9,36 @@ const roleRank: globalThis.Record<Role, string> = {
   系統管理員: 'admin',
 }
 
-export function canViewStudent(role: Role, _user: unknown, student: Student) {
-  if (role === '系統管理員' || role === '特教組長' || role === '特教導師') return true
-  if (role === '普通班導師') return ['801班', '702班', '603班'].includes(student.className)
-  if (role === '科任老師') return student.assessmentAdjustments.extendedTime || student.assessmentAdjustments.readAloud
-  if (role === '家長') return student.id === 's1'
+function resolveUserId(user: unknown) {
+  if (typeof user === 'string') return user
+  if (user && typeof user === 'object' && 'id' in user && typeof (user as { id?: unknown }).id === 'string') return (user as { id: string }).id
+  return ''
+}
+
+export function canViewStudent(role: Role, user: unknown, student: Student) {
+  const userId = resolveUserId(user)
+  if (role === '系統管理員' || role === '特教組長') return true
+  if (role === '特教導師') {
+    if (userId && student.specialTeacherId) return student.specialTeacherId === userId
+    return true
+  }
+  if (role === '普通班導師') {
+    if (userId && student.homeroomTeacherId) return student.homeroomTeacherId === userId
+    return ['801班', '702班', '603班'].includes(student.className)
+  }
+  if (role === '科任老師') {
+    if (userId && Array.isArray(student.subjectTeacherIds) && student.subjectTeacherIds.length > 0) return student.subjectTeacherIds.includes(userId)
+    return student.assessmentAdjustments.extendedTime || student.assessmentAdjustments.readAloud
+  }
+  if (role === '家長') {
+    if (userId && Array.isArray(student.guardianIds) && student.guardianIds.length > 0) return student.guardianIds.includes(userId)
+    return student.id === 's1'
+  }
   return false
 }
 
-export function visibleStudents(students: Student[], role: Role) {
-  return students.filter((student) => canViewStudent(role, null, student))
+export function visibleStudents(students: Student[], role: Role, user?: unknown) {
+  return students.filter((student) => canViewStudent(role, user, student))
 }
 
 export function canViewSensitive(role: Role) {
@@ -56,13 +76,14 @@ export function canManageRoster(role: Role) {
 export function parentSafeText(text: string) {
   return text
     .replaceAll('紅燈', '需要一起協助')
-    .replaceAll('高風險', '需要持續支持')
-    .replaceAll('異常', '需要觀察')
+    .replaceAll('高風險', '需要優先支持')
+    .replaceAll('異常', '近期需要觀察')
     .replaceAll('問題學生', '正在練習的孩子')
-    .replaceAll('行為問題', '需要練習的表達方式')
-    .replaceAll('情緒爆發', '情緒比較緊繃')
+    .replaceAll('問題', '目前需要協助的地方')
+    .replaceAll('行為問題', '適應狀況需要協助')
+    .replaceAll('情緒爆發', '情緒調節需要支持')
     .replaceAll('攻擊', '出現不適當的肢體反應')
-    .replaceAll('不配合', '目前需要更多引導')
+    .replaceAll('不配合', '目前需要引導')
     .replaceAll('優先處理', '需要一起協助')
 }
 
@@ -96,8 +117,8 @@ export function maskRecordForRole(record: CaseRecord, role: Role): CaseRecord {
   }
 }
 
-export function visibleRecords(records: CaseRecord[], students: Student[], role: Role) {
-  const ids = new Set(visibleStudents(students, role).map((student) => student.id))
+export function visibleRecords(records: CaseRecord[], students: Student[], role: Role, user?: unknown) {
+  const ids = new Set(visibleStudents(students, role, user).map((student) => student.id))
   if (role === '普通班導師' || role === '科任老師') {
     return records.filter((record) => ids.has(record.studentId) && (record.visibility === 'staff_limited' || record.visibility === 'parent_safe' || ['普通班回饋', '評量調整'].includes(record.type))).map((record) => maskRecordForRole(record, role))
   }

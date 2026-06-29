@@ -1,5 +1,16 @@
 import type { IEPDraft, RecordType, Student } from '../types'
 
+export function classifyRecordIntent(rawText: string): RecordType {
+  if (/家長|LINE|訊息|聯繫|通知/.test(rawText)) return '親師溝通'
+  if (/報讀|延長|考場|評量|段考|測驗/.test(rawText)) return '評量調整'
+  if (/回饋|普通班|導師|科任/.test(rawText)) return '普通班回饋'
+  if (/轉銜|交接/.test(rawText)) return '其他'
+  if (/會議|IEP/.test(rawText)) return '其他'
+  if (/情緒|大叫|哭|衝突|生氣|不適|爆/.test(rawText)) return '情緒行為'
+  if (/支持服務|治療|追蹤|輔導/.test(rawText)) return '支持服務追蹤'
+  return '課堂學習'
+}
+
 export function generateFormalRecord(rawText: string, type: RecordType) {
   const parentNotified = /通知|媽媽|爸爸|家長|LINE/.test(rawText)
   const location = /資源班/.test(rawText) ? '資源班' : /教室|第三節|課/.test(rawText) ? '普通班教室' : '校內'
@@ -8,7 +19,8 @@ export function generateFormalRecord(rawText: string, type: RecordType) {
   const intervention = rawText.includes('冷靜') || rawText.includes('資源班') ? '教師先協助學生離開刺激情境，並進行情緒安撫與口語提醒' : '教師提供提示、分段協助與立即回饋'
   const result = rawText.includes('完成') ? '學生在支持下完成部分任務' : rawText.includes('穩定') || rawText.includes('冷靜') ? '學生後續情緒逐漸穩定' : '學生可在協助下回到原本活動'
   const followUp = rawText.includes('明天') ? '明日持續追蹤並視需要調整支持方式' : '後續將持續觀察相關情境並記錄支持成效'
-  const aiDraft = `AI 草稿，需由老師確認。學生於${type}相關情境中，因${antecedent}，${behavior}。${intervention}。${result}。${parentNotified ? '已通知家長。' : ''}${followUp}。`
+  const inferredType = classifyRecordIntent(rawText)
+  const aiDraft = `AI 草稿，需由老師確認。系統判定類型：${inferredType}。學生於${type}相關情境中，因${antecedent}，${behavior}。${intervention}。${result}。${parentNotified ? '已通知家長。' : ''}${followUp}。`
 
   return { aiDraft, location, antecedent, behavior, intervention, result, followUp, parentNotified }
 }
@@ -40,4 +52,15 @@ export function generateTeacherTipCard(student: Student) {
 export function generateSemesterSummary(student: Student, records: { finalText: string; aiDraft: string; type: string }[]) {
   const confirmed = records.filter((record) => record.finalText)
   return `AI 草稿，需由老師確認。\n${student.name}本學期主要支持重點為${student.iepFocus.join('、')}。已採用${student.supportStrategies.join('、')}等策略。已確認紀錄共 ${confirmed.length} 筆，常見情境包含${[...new Set(records.map((record) => record.type))].join('、') || '課堂學習'}。下階段建議持續追蹤普通班合作、家長溝通與評量調整成效。`
+}
+
+export function generateMeetingPackage(student: Student, records: { finalText: string; aiDraft: string; type: string; usageTags?: string[] }[]) {
+  const confirmed = records.filter((record) => record.finalText)
+  const recent = confirmed.slice(0, 5)
+  return `AI 草稿，需由老師確認。\n【學生基本摘要】\n${student.name}｜${student.className}｜主要需求：${student.mainNeeds.join('、')}\n\n【現況能力】\n${student.iepFocus.join('、') || '尚待補充'}\n\n【支持策略】\n${student.supportStrategies.join('、')}\n\n【普通班回饋】\n${student.regularClassTips.join('、')}\n\n【重要事件紀錄】\n${recent.map((record) => `- ${record.finalText}`).join('\n') || '尚無已確認紀錄'}\n\n【家長參與與溝通】\n建議在會議中說明目前支持重點、家庭配合方式與下階段觀察項目。\n\n【下階段待辦】\n- 追蹤 ${student.mainNeeds[0]} 的穩定度\n- 檢查普通班提醒是否有效\n- 確認評量調整是否已通知完成`
+}
+
+export function generateTransferPackage(student: Student, records: { finalText: string; aiDraft: string; type: string }[]) {
+  const confirmed = records.filter((record) => record.finalText)
+  return `AI 草稿，需由老師確認。\n【學生基本需求】\n${student.mainNeeds.join('、')}\n\n【有效策略】\n${student.supportStrategies.join('、')}\n\n【無效策略】\n公開責備、一次給太多指令、突然更換規則\n\n【情緒觸發點】\n${student.regularClassTips[0] || '尚待補充'}\n\n【家長溝通注意事項】\n以溫和、具體、可執行的說明為主，避免使用內部術語。\n\n【評量調整】\n${student.assessmentAdjustments.note}\n\n【支持服務】\n${student.supportServices.map((service) => `${service.type}(${service.status})`).join('、') || '尚無'}\n\n【本學期摘要】\n${generateSemesterSummary(student, confirmed)}\n\n【下一位老師注意事項】\n- 延續有效策略\n- 前兩週密集觀察適應狀況\n- 若有轉銜需求，優先確認家長與導師溝通節點`
 }

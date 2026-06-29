@@ -1,5 +1,5 @@
 import type { Record, Role, Student } from '../types'
-import { generateSemesterSummary } from './aiService'
+import { generateMeetingPackage, generateTransferPackage } from './aiService'
 import { maskStudentForRole, parentSafeText } from './permissionService'
 
 export function buildReport(type: string, student: Student, records: Record[], role: Role = '特教導師') {
@@ -23,26 +23,9 @@ export function buildReport(type: string, student: Student, records: Record[], r
   }
 
   if (type === '交接資料包') {
-    lines.push(
-      `學生基本需求：${student.mainNeeds.join('、')}`,
-      `有效策略：${student.supportStrategies.join('、')}`,
-      '無效策略：突然更換規則、公開責備、一次給太多指令',
-      `情緒觸發點：${student.regularClassTips[0]}`,
-      `家長溝通注意事項：以溫和、具體、可配合的文字說明`,
-      `評量調整：${student.assessmentAdjustments.note}`,
-      `支持服務：${student.supportServices.map((service) => `${service.type}(${service.status})`).join('、')}`,
-      `本學期摘要：${generateSemesterSummary(safeStudent, confirmed)}`,
-      '下一位老師注意事項：延續有效策略，前兩週密集觀察適應狀況。',
-    )
+    lines.push(generateTransferPackage(safeStudent, confirmed))
   } else if (type === '會議前資料包') {
-    lines.push(
-      `本學期主要表現：${student.mainNeeds.join('、')}持續練習中`,
-      `重要事件紀錄：${confirmed.map((record) => record.finalText).join('\n') || '尚無確認紀錄'}`,
-      `有效支持策略：${student.supportStrategies.join('、')}`,
-      `普通班回饋：${student.regularClassTips.join('、')}`,
-      `評量調整狀況：${student.assessmentAdjustments.note}`,
-      `下階段建議目標：${student.iepFocus.join('、')}`,
-    )
+    lines.push(generateMeetingPackage(safeStudent, confirmed))
   } else {
     lines.push(
       `IEP 重點：${student.iepFocus.join('、')}`,
@@ -65,17 +48,21 @@ export function downloadText(filename: string, content: string, type = 'text/pla
   URL.revokeObjectURL(url)
 }
 
-export function studentsToCsv(students: Student[]) {
+export function studentsToCsv(students: Student[], role: Role = '特教導師') {
   const header = ['學生', '班級', '主要需求', '評量調整', '已通知導師', '已通知科任', '已通知教務處', '段考後檢討']
-  const rows = students.map((student) => [
-    student.name,
-    student.className,
-    student.mainNeeds.join('、'),
-    student.assessmentAdjustments.note,
-    student.assessmentAdjustments.notifiedHomeroom ? '是' : '否',
-    student.assessmentAdjustments.notifiedSubjectTeachers ? '是' : '否',
-    student.assessmentAdjustments.notifiedAcademicOffice ? '是' : '否',
-    student.assessmentAdjustments.postExamReview || '未填',
-  ])
+  const rows = students.map((student) => {
+    const safe = maskStudentForRole(student, role)
+    const note = role === '家長' ? parentSafeText(safe.assessmentAdjustments.note) : safe.assessmentAdjustments.note
+    return [
+      safe.name,
+      safe.className,
+      safe.mainNeeds.join('、'),
+      note,
+      safe.assessmentAdjustments.notifiedHomeroom ? '是' : '否',
+      safe.assessmentAdjustments.notifiedSubjectTeachers ? '是' : '否',
+      safe.assessmentAdjustments.notifiedAcademicOffice ? '是' : '否',
+      role === '家長' ? parentSafeText(safe.assessmentAdjustments.postExamReview || '未填') : safe.assessmentAdjustments.postExamReview || '未填',
+    ]
+  })
   return [header, ...rows].map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(',')).join('\n')
 }

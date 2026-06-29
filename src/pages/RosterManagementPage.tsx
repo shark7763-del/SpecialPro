@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Role } from '../types'
 import { canManageRoster, roleCodeToDisplay } from '../services/permissionService'
+import { downloadText } from '../services/exportService'
 import { createAuditLog, createProfileRow, createStudentRow, loadRosterData, setProfileActive, updateStudentRow, upsertGuardianAccess, upsertTeacherAccess } from '../services/rosterService'
 import type { RosterProfile, Student, StudentGuardianRow, StudentTeacherAccessRow } from '../types'
 
@@ -59,6 +60,10 @@ function splitEmails(value: string) {
     .split(/[;,]/)
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function isEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 }
 
 function badgeClass(active: boolean) {
@@ -301,14 +306,18 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
         const displayCode = record.student_display_code.trim()
         const grade = record.grade.trim()
         const className = record.class_name.trim()
-        if (!displayCode || !grade || !className) errors.push('學生姓名、年級、班級為必填。')
+        if (!displayCode || !grade || !className) errors.push('學生 display_code、年級、班級為必填。')
         if (students.some((student) => student.name === displayCode && student.className === className)) errors.push('學生已存在。')
         const specialTeacher = profiles.find((profile) => profile.email?.toLowerCase() === record.special_teacher_email.toLowerCase()) || null
         const homeroomTeacher = profiles.find((profile) => profile.email?.toLowerCase() === record.homeroom_teacher_email.toLowerCase()) || null
+        if (record.special_teacher_email && !isEmail(record.special_teacher_email)) errors.push(`特教導師 email 格式錯誤：${record.special_teacher_email}`)
+        if (record.homeroom_teacher_email && !isEmail(record.homeroom_teacher_email)) errors.push(`普通班導師 email 格式錯誤：${record.homeroom_teacher_email}`)
         if (record.special_teacher_email && !specialTeacher) errors.push(`找不到特教導師帳號：${record.special_teacher_email}`)
         if (record.homeroom_teacher_email && !homeroomTeacher) errors.push(`找不到普通班導師帳號：${record.homeroom_teacher_email}`)
         const subjectEmails = splitEmails(record.subject_teacher_emails)
         const parentEmails = splitEmails(record.parent_emails)
+        subjectEmails.forEach((email) => { if (!isEmail(email)) errors.push(`科任老師 email 格式錯誤：${email}`) })
+        parentEmails.forEach((email) => { if (!isEmail(email)) errors.push(`家長 email 格式錯誤：${email}`) })
         const subjectTeachers = subjectEmails.map((email) => profiles.find((profile) => profile.email?.toLowerCase() === email.toLowerCase())).filter(Boolean) as RosterProfile[]
         const parents = parentEmails.map((email) => profiles.find((profile) => profile.email?.toLowerCase() === email.toLowerCase())).filter(Boolean) as RosterProfile[]
         subjectEmails.forEach((email, index) => { if (!subjectTeachers[index]) errors.push(`找不到科任老師帳號：${email}`) })
@@ -333,9 +342,14 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
 
   const importCsv = async () => {
     try {
+      if (!csvPreview.length) throw new Error('請先完成 CSV 預覽。')
+      const hasErrors = csvPreview.some((row) => row.errors.length > 0)
+      if (hasErrors) throw new Error('預覽中有錯誤，請修正後再匯入。')
       let successCount = 0
+      let teacherBindCount = 0
+      let guardianBindCount = 0
       for (const row of csvPreview) {
-        if (row.errors.length || !row.student) continue
+        if (!row.student) continue
         const student = await createStudentRow({
           schoolId,
           actorId,
@@ -355,15 +369,19 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
         })
         if (row.specialTeacher) {
           await upsertTeacherAccess({ schoolId, actorId, studentId: student.id, teacherId: row.specialTeacher.id, accessType: 'special', isActive: true })
+          teacherBindCount += 1
         }
         if (row.homeroomTeacher) {
           await upsertTeacherAccess({ schoolId, actorId, studentId: student.id, teacherId: row.homeroomTeacher.id, accessType: 'homeroom', isActive: true })
+          teacherBindCount += 1
         }
         for (const profile of row.subjectTeachers) {
           await upsertTeacherAccess({ schoolId, actorId, studentId: student.id, teacherId: profile.id, accessType: 'subject', isActive: true })
+          teacherBindCount += 1
         }
         for (const profile of row.parents) {
           await upsertGuardianAccess({ schoolId, actorId, studentId: student.id, guardianId: profile.id, relationship: '家長', isActive: true })
+          guardianBindCount += 1
         }
         successCount += 1
       }
@@ -375,7 +393,7 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
         targetId: 'bulk_import',
         metadata: { imported: successCount },
       })
-      setMessage(`已匯入 ${successCount} 位學生。`)
+      setMessage(`已匯入 ${successCount} 位學生，${teacherBindCount} 筆老師綁定，${guardianBindCount} 筆家長綁定。`)
       setCsvInput('')
       setCsvPreview([])
       await reload()
@@ -570,6 +588,7 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
           <div className="rounded-3xl bg-white p-5 shadow-sm">
             <h3 className="text-lg font-black text-slate-900">CSV 匯入</h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">欄位：student_display_code, grade, class_name, seat_no, main_need, support_level, special_teacher_email, homeroom_teacher_email, subject_teacher_emails, parent_emails</p>
+            <button onClick={() => downloadText('specialpro_roster_template.csv', ['student_display_code,grade,class_name,seat_no,main_need,support_level,special_teacher_email,homeroom_teacher_email,subject_teacher_emails,parent_emails', '王○安,七年級,701,5,學習支持,一般支持,special@example.com,homeroom@example.com,subject1@example.com;subject2@example.com,parent@example.com'].join('\n'), 'text/csv;charset=utf-8')} className="mt-3 rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-700">下載範本</button>
             <textarea value={csvInput} onChange={(event) => setCsvInput(event.target.value)} rows={8} className="mt-4 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6" placeholder="貼上 CSV 內容" />
             <div className="mt-3 flex gap-2">
               <button onClick={buildPreview} className="rounded-xl bg-slate-900 px-4 py-3 font-bold text-white">解析預覽</button>

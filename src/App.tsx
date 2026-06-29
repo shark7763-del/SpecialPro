@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './index.css'
 import { PrivacyNotice } from './components/PrivacyNotice'
 import { SafetyModeBanner } from './components/SafetyModeBanner'
@@ -7,11 +7,14 @@ import { isSchoolTestMode } from './config/appMode'
 import { useAuth } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
 import { RosterManagementPage } from './pages/RosterManagementPage'
+import { ReadinessCheckPage } from './pages/ReadinessCheckPage'
 import { generateFormalRecord, generateIEPDraft, generateParentMessage, generateSemesterSummary, generateTeacherTipCard } from './services/aiService'
 import { signOut } from './services/authService'
 import { buildReport, downloadText, studentsToCsv } from './services/exportService'
 import { canConfirmRecord, canEditRecords, canManageRoster, canSeeSensitive, parentSafeText, roleCodeToDisplay, visibleRecords, visibleStudents } from './services/permissionService'
-import { loadSchoolData } from './services/schoolDataService'
+import { createAuditLog } from './services/rosterService'
+import { getTeacherTodoList } from './services/todoService'
+import { loadSchoolData, saveAssessmentAdjustment, saveSchoolIepGoal, saveSchoolRecord } from './services/schoolDataService'
 import { loadIepGoals, loadRecords, loadStudents, resetDemoData, saveIepGoals, saveRecords, saveStudents } from './services/storageService'
 import { isSupabaseConfigured } from './services/supabaseClient'
 import { pullFromSupabase, pushToSupabase, type SyncResult } from './services/syncService'
@@ -19,7 +22,7 @@ import { recordTypes, reportTypes, roles, usageTags } from './utils/constants'
 import { getTaipeiDateString, getTaipeiISOString, getTaipeiTimeString } from './utils/date'
 import type { IEPDraft, IEPGoal, Record as CaseRecord, RecordType, Role, Student, StudentStatus, UsageTag } from './types'
 
-type Tab = '首頁' | '學生' | '紀錄' | 'IEP' | '報表' | '名單管理'
+type Tab = '首頁' | '學生' | '紀錄' | 'IEP' | '報表' | '名單管理' | '妥善率檢查'
 
 const tabs: Tab[] = ['首頁', '學生', '紀錄', 'IEP', '報表']
 
@@ -149,21 +152,30 @@ function Header({ role, setRole, onReset, syncResult, onPushSync, onPullSync, ca
   )
 }
 
-function ChairDashboard({ students, records }: { students: Student[]; records: CaseRecord[] }) {
+function ChairDashboard({ students, records, iepGoals, viewerId, setTab }: { students: Student[]; records: CaseRecord[]; iepGoals: IEPGoal[]; viewerId?: string; setTab: (tab: Tab) => void }) {
   const draftCount = records.filter((record) => record.status === 'ai_draft' || record.status === 'teacher_draft').length
   const urgentCount = students.filter((student) => student.status === 'urgent').length
+  const confirmedIepCount = iepGoals.filter((goal) => goal.confirmed).length
+  const meetingRecords = records.filter((record) => record.type === '其他' || /會議|IEP/.test(record.finalText || record.aiDraft))
+  const confirmedMeetingCount = meetingRecords.filter((record) => record.status === 'confirmed').length
+  const adjustmentReadyCount = students.filter((student) => student.assessmentAdjustments.notifiedHomeroom && student.assessmentAdjustments.notifiedSubjectTeachers && student.assessmentAdjustments.notifiedAcademicOffice).length
+  const supportTrackingReadyCount = students.filter((student) => student.supportServices.every((service) => !service.nextFollowUpDate || new Date(service.nextFollowUpDate).getTime() >= Date.now())).length
+  const iepTodoCount = iepGoals.filter((goal) => !goal.confirmed).length
+  const transferTodoCount = records.filter((record) => /轉銜|交接/.test(record.finalText || record.aiDraft)).length
   const metrics = [
-    ['IEP 完成率', Math.round((records.filter((record) => record.type === '其他' && record.status === 'confirmed').length / Math.max(students.length, 1)) * 100)],
-    ['會議紀錄完成率', Math.round((records.filter((record) => record.type === '其他' && record.status === 'confirmed').length / Math.max(records.filter((record) => record.type === '其他').length, 1)) * 100)],
-    ['評量調整確認率', Math.round((students.filter((s) => s.assessmentAdjustments.notifiedHomeroom).length / students.length) * 100)],
-    ['支持服務追蹤狀態', Math.round((students.filter((student) => student.supportServices.every((service) => service.status !== '待追蹤')).length / Math.max(students.length, 1)) * 100)],
+    ['IEP 完成率', Math.round((confirmedIepCount / Math.max(iepGoals.length, 1)) * 100)],
+    ['會議紀錄完成率', Math.round((confirmedMeetingCount / Math.max(meetingRecords.length, 1)) * 100)],
+    ['評量調整確認率', Math.round((adjustmentReadyCount / Math.max(students.length, 1)) * 100)],
+    ['支持服務追蹤狀態', Math.round((supportTrackingReadyCount / Math.max(students.length, 1)) * 100)],
   ]
+  const todoPreview = getTeacherTodoList(viewerId || '', '特教組長', students, records, iepGoals).slice(0, 5)
   return (
     <main className="space-y-5 px-4">
       <Section title="組長戰情室">
+        <button onClick={() => setTab('妥善率檢查')} className="w-full rounded-2xl bg-slate-900 px-5 py-4 text-lg font-black text-white">系統妥善率檢查</button>
         <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-sm text-slate-500">鑑定安置資料待辦</p><p className="text-3xl font-black text-teal-700">3</p></div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-sm text-slate-500">轉銜資料待辦</p><p className="text-3xl font-black text-teal-700">5</p></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-sm text-slate-500">IEP / 會議待辦</p><p className="text-3xl font-black text-teal-700">{iepTodoCount}</p></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-sm text-slate-500">轉銜 / 交接待辦</p><p className="text-3xl font-black text-teal-700">{transferTodoCount}</p></div>
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-sm text-slate-500">未完成紀錄</p><p className="text-3xl font-black text-amber-700">{draftCount}</p></div>
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-sm text-slate-500">優先協助學生</p><p className="text-3xl font-black text-rose-700">{urgentCount}</p></div>
         </div>
@@ -180,20 +192,21 @@ function ChairDashboard({ students, records }: { students: Student[]; records: C
       </Section>
       <Section title="各老師未完成事項">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm">
-          <p>林特教：2 筆未定稿、1 份 IEP 待確認</p>
-          <p>周特教：1 筆普通班回饋待回覆、2 份轉銜資料待整理</p>
+          {todoPreview.length ? todoPreview.map((todo) => <p key={todo.id}>{todo.studentName}：{todo.title}，期限 {todo.dueDate}</p>) : <p>目前沒有未完成事項。</p>}
         </div>
       </Section>
     </main>
   )
 }
 
-function HomePage({ role, students, records, setTab }: { role: Role; students: Student[]; records: CaseRecord[]; setTab: (tab: Tab) => void }) {
-  if (role === '特教組長') return <ChairDashboard students={students} records={records} />
-  if (role === '家長') return students[0] ? <ParentHome student={students[0]} /> : <EmptyState />
+function HomePage({ role, students, records, iepGoals, setTab, viewerId }: { role: Role; students: Student[]; records: CaseRecord[]; iepGoals: IEPGoal[]; setTab: (tab: Tab) => void; viewerId?: string }) {
+  const isSpecialTeacherOrChair = role === '特教導師' || role === '特教組長'
+  const visible = visibleStudents(students, role, viewerId)
+  if (role === '特教組長') return <ChairDashboard students={students} records={records} iepGoals={iepGoals} viewerId={viewerId} setTab={setTab} />
+  if (role === '家長') return visible[0] ? <ParentHome student={visible[0]} /> : <EmptyState />
 
-  const visible = visibleStudents(students, role)
-  const drafts = visibleRecords(records, students, role).filter((record) => record.status === 'ai_draft' || record.status === 'teacher_draft')
+  const drafts = visibleRecords(records, students, role, viewerId).filter((record) => record.status === 'ai_draft' || record.status === 'teacher_draft')
+  const todos = getTeacherTodoList(viewerId || '', role, students, records, iepGoals)
 
   if (role === '普通班導師' || role === '科任老師') {
     return (
@@ -216,9 +229,30 @@ function HomePage({ role, students, records, setTab }: { role: Role; students: S
           {['情緒紀錄', '親師溝通', '課堂觀察', '普通班回饋'].map((item) => <button key={item} onClick={() => setTab('紀錄')} className="rounded-xl bg-teal-50 px-3 py-3 text-sm font-bold text-teal-800">{item}</button>)}
         </div>
         {canManageRoster(role) && <button onClick={() => setTab('名單管理')} className="mt-3 w-full rounded-2xl bg-slate-900 px-5 py-4 text-lg font-black text-white">名單管理</button>}
+        {isSpecialTeacherOrChair && <button onClick={() => setTab('妥善率檢查')} className="mt-3 w-full rounded-2xl bg-slate-100 px-5 py-4 text-lg font-black text-slate-800">妥善率檢查</button>}
       </section>
+      {isSpecialTeacherOrChair && (
+        <Section title="今日待辦">
+          <div className="space-y-3">
+            {todos.length ? todos.map((todo) => (
+              <button key={todo.id} onClick={() => setTab(todo.targetTab)} className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-black text-slate-900">{todo.title}</p>
+                    <p className="mt-1 text-sm text-slate-500">{todo.studentName}｜期限 {todo.dueDate}</p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${todo.priority === '高' ? 'bg-rose-50 text-rose-700' : todo.priority === '中' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{todo.priority}</span>
+                </div>
+              </button>
+            )) : <p className="rounded-2xl bg-white p-4 text-sm font-semibold text-slate-500 shadow-sm">今天沒有待辦。</p>}
+          </div>
+        </Section>
+      )}
       <Section title="今天最重要 3 件事">
-        <div className="space-y-2">{['王○安 IEP 會議紀錄尚未確認', '李○庭 家長訊息待回覆', '陳○恩 段考評量調整待確認'].map((item) => <div key={item} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{item}</div>)}</div>
+        <div className="space-y-2">
+          {todos.slice(0, 3).map((todo) => <div key={todo.id} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{todo.studentName}｜{todo.title}｜期限 {todo.dueDate}</div>)}
+          {!todos.length && <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-500 shadow-sm">目前沒有特別待辦。</div>}
+        </div>
       </Section>
       <Section title="即將到期提醒">
         <div className="grid grid-cols-2 gap-2">{['IEP 檢討', '會議紀錄', '評量調整', '支持服務追蹤', '轉銜資料'].map((item) => <div key={item} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-bold text-slate-700 shadow-sm">{item}</div>)}</div>
@@ -306,16 +340,16 @@ function LimitedStudentCard({ student, role, onFeedback }: { student: Student; r
   )
 }
 
-function StudentsPage({ role, students, records, iepGoals, setTab, createFeedback }: { role: Role; students: Student[]; records: CaseRecord[]; iepGoals: IEPGoal[]; setTab: (tab: Tab) => void; createFeedback: (student: Student, type: 'stable' | 'help') => void }) {
+function StudentsPage({ role, students, records, iepGoals, setTab, createFeedback, viewerId, schoolId }: { role: Role; students: Student[]; records: CaseRecord[]; iepGoals: IEPGoal[]; setTab: (tab: Tab) => void; createFeedback: (student: Student, type: 'stable' | 'help') => void; viewerId?: string; schoolId?: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const visible = visibleStudents(students, role)
+  const visible = visibleStudents(students, role, viewerId)
   const selected = visible.find((student) => student.id === selectedId)
 
   if (role === '普通班導師' || role === '科任老師') {
     return <main className="space-y-4 px-4">{visible.map((student) => <LimitedStudentCard key={student.id} student={student} role={role} onFeedback={createFeedback} />)}</main>
   }
-  if (role === '家長') return visible[0] ? <StudentDetail student={visible[0]} records={records} iepGoals={iepGoals} role={role} /> : <EmptyState />
-  if (selected) return <StudentDetail student={selected} records={records} iepGoals={iepGoals} role={role} onBack={() => setSelectedId(null)} />
+  if (role === '家長') return visible[0] ? <StudentDetail student={visible[0]} records={records} iepGoals={iepGoals} role={role} viewerId={viewerId} schoolId={schoolId} /> : <EmptyState />
+  if (selected) return <StudentDetail student={selected} records={records} iepGoals={iepGoals} role={role} viewerId={viewerId} schoolId={schoolId} onBack={() => setSelectedId(null)} />
 
   return (
     <main className="space-y-4 px-4">
@@ -324,13 +358,28 @@ function StudentsPage({ role, students, records, iepGoals, setTab, createFeedbac
   )
 }
 
-function StudentDetail({ student, records, iepGoals, role, onBack }: { student: Student; records: CaseRecord[]; iepGoals: IEPGoal[]; role: Role; onBack?: () => void }) {
+function StudentDetail({ student, records, iepGoals, role, onBack, viewerId, schoolId }: { student: Student; records: CaseRecord[]; iepGoals: IEPGoal[]; role: Role; onBack?: () => void; viewerId?: string; schoolId?: string }) {
   const safe = role === '家長'
   const studentRecords = records.filter((record) => record.studentId === student.id && (record.status === 'confirmed' || canSeeSensitive(role)))
   const communication = studentRecords.filter((record) => record.type === '親師溝通')
   const behavior = studentRecords.filter((record) => record.type === '情緒行為')
   const summary = generateSemesterSummary(student, studentRecords)
   const confirmedIep = iepGoals.filter((goal) => goal.studentId === student.id && goal.confirmed)
+  const parentSafe = (text: string) => (safe ? parentSafeText(text) : text)
+
+  useEffect(() => {
+    if (!viewerId || !student.id) return
+    if (!schoolId) return
+    void createAuditLog({
+      actorId: viewerId,
+      schoolId,
+      action: role === '家長' ? 'parent_view' : 'view_student',
+      targetTable: 'students',
+      targetId: student.id,
+      metadata: { className: student.className },
+    }).catch(() => {})
+  }, [viewerId, schoolId, student.id, role, student.className])
+
   return (
     <main className="space-y-4 px-4">
       {onBack && <button onClick={onBack} className="rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">返回學生列表</button>}
@@ -340,14 +389,14 @@ function StudentDetail({ student, records, iepGoals, role, onBack }: { student: 
       </section>
       {[
         ['基本資料', safe ? `孩子目前正在練習${student.mainNeeds.join('、')}` : `年級：${student.grade}｜導師：${student.homeroomTeacher}｜家長：${student.parentName} ${student.parentContact}`],
-        ['主要需求', student.mainNeeds.join('、')],
-        ['IEP 重點', student.iepFocus.join('、')],
+        ['主要需求', safe ? parentSafe(student.mainNeeds.join('、')) : student.mainNeeds.join('、')],
+        ['IEP 重點', safe ? parentSafe(student.iepFocus.join('、')) : student.iepFocus.join('、')],
         ['已確認 IEP', confirmedIep.map((goal) => `${goal.domain || '學習/適應'}｜${goal.semesterGoal}`).join('\n') || '尚無已確認 IEP'],
-        ['支持策略', student.supportStrategies.join('、')],
-        ['普通班提醒卡', generateTeacherTipCard(student)],
-        ['評量調整', student.assessmentAdjustments.note],
-        ['支持服務', student.supportServices.map((service) => `${service.type}｜${service.status}｜下次追蹤 ${service.nextFollowUpDate}`).join('\n')],
-        ['親師溝通紀錄', communication.map((record) => record.finalText || record.aiDraft).join('\n') || '尚無確認紀錄'],
+        ['支持策略', safe ? parentSafe(student.supportStrategies.join('、')) : student.supportStrategies.join('、')],
+        ['普通班提醒卡', safe ? parentSafe(generateTeacherTipCard(student)) : generateTeacherTipCard(student)],
+        ['評量調整', safe ? parentSafe(student.assessmentAdjustments.note) : student.assessmentAdjustments.note],
+        ['支持服務', safe ? '學校會持續協助，並在需要時再與家裡說明。' : student.supportServices.map((service) => `${service.type}｜${service.status}｜下次追蹤 ${service.nextFollowUpDate}`).join('\n')],
+        ['親師溝通紀錄', communication.map((record) => parentSafe(record.finalText || record.aiDraft)).join('\n') || '尚無確認紀錄'],
         ['情緒行為紀錄', safe ? '孩子目前正在練習情緒表達，學校會持續協助。' : behavior.map((record) => record.finalText || record.aiDraft).join('\n') || '尚無確認紀錄'],
         ['學期摘要', safe ? parentSafeText(summary) : summary],
       ].map(([title, body]) => <section key={title} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><h3 className="font-black text-slate-900">{title}</h3><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{body}</p></section>)}
@@ -356,8 +405,8 @@ function StudentDetail({ student, records, iepGoals, role, onBack }: { student: 
   )
 }
 
-function RecordsPage({ role, students, records, addRecord, confirmRecord, createFeedback }: { role: Role; students: Student[]; records: CaseRecord[]; addRecord: (record: CaseRecord) => void; confirmRecord: (id: string, finalText: string) => void; createFeedback: (student: Student, type: 'stable' | 'help') => void }) {
-  const visible = visibleStudents(students, role)
+function RecordsPage({ role, students, records, addRecord, confirmRecord, createFeedback, viewerId, schoolId }: { role: Role; students: Student[]; records: CaseRecord[]; addRecord: (record: CaseRecord) => void; confirmRecord: (id: string, finalText: string) => void; createFeedback: (student: Student, type: 'stable' | 'help') => void; viewerId?: string; schoolId?: string }) {
+  const visible = visibleStudents(students, role, viewerId)
   const [studentId, setStudentId] = useState(visible[0]?.id || '')
   const [type, setType] = useState<RecordType>('情緒行為')
   const [rawText, setRawText] = useState('小安第三節因為同學碰到他的鉛筆盒大叫，我帶他到資源班冷靜，已通知媽媽，明天再觀察同儕互動。')
@@ -408,6 +457,16 @@ function RecordsPage({ role, students, records, addRecord, confirmRecord, create
   const saveDraftRecord = () => {
     if (!draft) return
     addRecord({ ...draft, status: 'teacher_draft', finalText: '' })
+    if (viewerId && schoolId) {
+      void createAuditLog({
+        actorId: viewerId,
+        schoolId,
+        action: 'create_record_draft',
+        targetTable: 'case_records',
+        targetId: draft.id,
+        metadata: { studentId: draft.studentId, recordType: draft.type },
+      }).catch(() => {})
+    }
     setDraft(null)
     setRawText('')
   }
@@ -415,6 +474,16 @@ function RecordsPage({ role, students, records, addRecord, confirmRecord, create
   const confirmNewDraft = () => {
     if (!draft) return
     addRecord({ ...draft, status: 'confirmed', confirmedAt: todayParts().iso, confirmedBy: role })
+    if (viewerId && schoolId) {
+      void createAuditLog({
+        actorId: viewerId,
+        schoolId,
+        action: 'finalize_record',
+        targetTable: 'case_records',
+        targetId: draft.id,
+        metadata: { studentId: draft.studentId, recordType: draft.type },
+      }).catch(() => {})
+    }
     setDraft(null)
     setRawText('')
   }
@@ -466,14 +535,14 @@ function RecordsPage({ role, students, records, addRecord, confirmRecord, create
       </Section>
 
       <Section title="近期紀錄">
-        <div className="space-y-3">{visibleRecords(records, students, role).map((record) => <div key={record.id} className="rounded-2xl bg-white p-4 text-sm shadow-sm"><p className="font-black text-slate-900">{students.find((s) => s.id === record.studentId)?.name}｜{record.type}｜{record.status === 'confirmed' ? '已定稿' : '草稿未定稿'}</p><p className="mt-2 text-slate-700">{record.finalText || record.aiDraft}</p>{record.status !== 'confirmed' && canConfirmRecord(role) && <button onClick={() => confirmRecord(record.id, record.aiDraft.replace('AI 草稿，需由老師確認。', ''))} className="mt-3 rounded-xl bg-teal-600 px-4 py-2 font-bold text-white">確認定稿</button>}</div>)}</div>
+        <div className="space-y-3">{visibleRecords(records, students, role, viewerId).map((record) => <div key={record.id} className="rounded-2xl bg-white p-4 text-sm shadow-sm"><p className="font-black text-slate-900">{students.find((s) => s.id === record.studentId)?.name}｜{record.type}｜{record.status === 'confirmed' ? '已定稿' : '草稿未定稿'}</p><p className="mt-2 text-slate-700">{record.finalText || record.aiDraft}</p>{record.status !== 'confirmed' && canConfirmRecord(role) && <button onClick={() => confirmRecord(record.id, record.aiDraft.replace('AI 草稿，需由老師確認。', ''))} className="mt-3 rounded-xl bg-teal-600 px-4 py-2 font-bold text-white">確認定稿</button>}</div>)}</div>
       </Section>
     </main>
   )
 }
 
-function IEPPage({ role, students, iepGoals, saveIepGoal, updateStudent }: { role: Role; students: Student[]; iepGoals: IEPGoal[]; saveIepGoal: (goal: IEPGoal) => void; updateStudent: (student: Student) => void }) {
-  const visible = visibleStudents(students, role)
+function IEPWorkflowPage({ role, students, iepGoals, saveIepGoal, updateStudent, viewerId, schoolId }: { role: Role; students: Student[]; iepGoals: IEPGoal[]; saveIepGoal: (goal: IEPGoal) => void; updateStudent: (student: Student) => void; viewerId?: string; schoolId?: string }) {
+  const visible = visibleStudents(students, role, viewerId)
   const [studentId, setStudentId] = useState(visible[0]?.id || '')
   const [input, setInput] = useState('閱讀速度慢，理解題容易抓不到重點，上課容易分心，需要關鍵字提示。')
   const [draft, setDraft] = useState<IEPDraft | null>(null)
@@ -504,6 +573,16 @@ function IEPPage({ role, students, iepGoals, saveIepGoal, updateStudent }: { rol
       confirmedAt: confirmed ? now : undefined,
       updatedAt: now,
     })
+    if (viewerId && schoolId) {
+      void createAuditLog({
+        actorId: viewerId,
+        schoolId,
+        action: confirmed ? 'confirm_iep_goal' : 'save_iep_draft',
+        targetTable: 'iep_goals',
+        targetId: `${selected.id}:${now}`,
+        metadata: { confirmed },
+      }).catch(() => {})
+    }
     setSavedDraftMessage(confirmed ? '已確認 IEP，會進入學生個案與報表。' : '已儲存 IEP 草稿，尚未成為正式文件。')
   }
 
@@ -552,8 +631,8 @@ function AssessmentManager({ students, updateStudent }: { students: Student[]; u
   )
 }
 
-function ReportsPage({ role, students, records, iepGoals }: { role: Role; students: Student[]; records: CaseRecord[]; iepGoals: IEPGoal[] }) {
-  const visible = visibleStudents(students, role)
+function ReportsPage({ role, students, records, iepGoals, viewerId, schoolId }: { role: Role; students: Student[]; records: CaseRecord[]; iepGoals: IEPGoal[]; viewerId?: string; schoolId?: string }) {
+  const visible = visibleStudents(students, role, viewerId)
   const [studentId, setStudentId] = useState(visible[0]?.id || '')
   const [type, setType] = useState('交接資料包')
   const [content, setContent] = useState('')
@@ -566,6 +645,17 @@ function ReportsPage({ role, students, records, iepGoals }: { role: Role; studen
     if (window.confirm(exportWarning)) action()
   }
   const produce = () => selected && setContent(`${buildReport(type, selected, records.filter((record) => record.status === 'confirmed'), role)}\n\n已確認 IEP：\n${iepGoals.filter((goal) => goal.studentId === selected.id && goal.confirmed).map((goal) => goal.semesterGoal).join('\n') || '尚無'}`)
+  const writeExportLog = (reportType: string) => {
+    if (!viewerId || !schoolId || !selected) return
+    void createAuditLog({
+      actorId: viewerId,
+      schoolId,
+      action: 'export_report',
+      targetTable: 'export_reports',
+      targetId: selected.id,
+      metadata: { reportType, studentId: selected.id, role, timestamp: todayParts().iso },
+    }).catch(() => {})
+  }
   const html = `<html><head><meta charset="utf-8"><title>${type}</title></head><body><pre>${content.replace(/[&<>]/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[s] || s)}</pre></body></html>`
   return (
     <main className="space-y-5 px-4">
@@ -580,11 +670,11 @@ function ReportsPage({ role, students, records, iepGoals }: { role: Role; studen
       </Section>
       <textarea value={content} onChange={(event) => setContent(event.target.value)} rows={14} className="w-full rounded-3xl border border-slate-200 bg-white p-5 text-sm leading-6 shadow-sm" />
       <div className="grid grid-cols-2 gap-2 px-1">
-        <button onClick={() => safeExport(() => navigator.clipboard.writeText(content))} className="rounded-xl bg-slate-900 px-4 py-3 font-bold text-white">複製文字</button>
-        <button onClick={() => safeExport(() => downloadText(`${type}.json`, JSON.stringify({ type, student: selected, content, role, createdAt: todayParts().iso }, null, 2), 'application/json;charset=utf-8'))} className="rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-800">下載 JSON</button>
-        <button onClick={() => safeExport(() => downloadText('評量調整清單.csv', studentsToCsv(students), 'text/csv;charset=utf-8'))} className="rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-800">下載 CSV</button>
-        <button onClick={() => safeExport(() => window.print())} className="rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-800">瀏覽器列印</button>
-        <button onClick={() => safeExport(() => downloadText(`${type}.html`, html, 'text/html;charset=utf-8'))} className="col-span-2 rounded-xl bg-teal-50 px-4 py-3 font-bold text-teal-800">Word 相容 HTML</button>
+        <button onClick={() => safeExport(() => { void navigator.clipboard.writeText(content); writeExportLog('copy_text') })} className="rounded-xl bg-slate-900 px-4 py-3 font-bold text-white">複製文字</button>
+        <button onClick={() => safeExport(() => { downloadText(`${type}.json`, JSON.stringify({ type, student: selected, content, role, createdAt: todayParts().iso }, null, 2), 'application/json;charset=utf-8'); writeExportLog('json') })} className="rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-800">下載 JSON</button>
+        <button onClick={() => safeExport(() => { downloadText('評量調整清單.csv', studentsToCsv(selected ? [selected] : visible, role), 'text/csv;charset=utf-8'); writeExportLog('csv') })} className="rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-800">下載 CSV</button>
+        <button onClick={() => safeExport(() => { window.print(); writeExportLog('print') })} className="rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-800">瀏覽器列印</button>
+        <button onClick={() => safeExport(() => { downloadText(`${type}.html`, html, 'text/html;charset=utf-8'); writeExportLog('html') })} className="col-span-2 rounded-xl bg-teal-50 px-4 py-3 font-bold text-teal-800">Word 相容 HTML</button>
       </div>
     </main>
   )
@@ -602,6 +692,7 @@ export default function App() {
   const [installMessage, setInstallMessage] = useState('')
   const [isInstalled, setIsInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches || ('standalone' in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone)))
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null)
+  const loggedLoginRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!isSchoolTestMode) saveStudents(students)
@@ -628,6 +719,20 @@ export default function App() {
       }
     })()
   }, [auth.isLoggedIn])
+
+  useEffect(() => {
+    if (!isSchoolTestMode || !auth.isLoggedIn || !auth.profile?.id || !auth.profile?.school_id) return
+    if (loggedLoginRef.current === auth.profile.id) return
+    loggedLoginRef.current = auth.profile.id
+    void createAuditLog({
+      actorId: auth.profile.id,
+      schoolId: auth.profile.school_id,
+      action: 'login',
+      targetTable: 'profiles',
+      targetId: auth.profile.id,
+      metadata: { role: auth.profile.role },
+    }).catch(() => {})
+  }, [auth.isLoggedIn, auth.profile?.id, auth.profile?.school_id, auth.profile?.role])
 
   const refreshSchoolData = useCallback(async () => {
     const data = await loadSchoolData()
@@ -673,12 +778,36 @@ export default function App() {
   }, [])
 
   const page = useMemo(() => {
-    const addRecord = (record: CaseRecord) => setRecords((prev) => [record, ...prev])
-    const confirmRecord = (id: string, finalText: string) => setRecords((prev) => prev.map((record) => record.id === id ? { ...record, finalText, status: 'confirmed', confirmedAt: todayParts().iso, confirmedBy: role } : record))
+    const currentActorId = auth.profile?.id || ''
+    const currentSchoolId = auth.profile?.school_id || ''
+    const addRecord = (record: CaseRecord) => {
+      setRecords((prev) => [record, ...prev])
+      if (isSchoolTestMode && currentActorId && currentSchoolId) {
+        void saveSchoolRecord(record, currentSchoolId, currentActorId).catch(() => {})
+      }
+    }
+    const confirmRecord = (id: string, finalText: string) => {
+      const updated = records.find((record) => record.id === id)
+      setRecords((prev) => prev.map((record) => record.id === id ? { ...record, finalText, status: 'confirmed', confirmedAt: todayParts().iso, confirmedBy: role } : record))
+      const target = records.find((record) => record.id === id)
+      if (updated && currentActorId && currentSchoolId) {
+        void saveSchoolRecord({ ...updated, finalText, status: 'confirmed', confirmedAt: todayParts().iso, confirmedBy: role }, currentSchoolId, currentActorId).catch(() => {})
+      }
+      if (target && currentActorId && currentSchoolId) {
+        void createAuditLog({
+          actorId: currentActorId,
+          schoolId: currentSchoolId,
+          action: 'finalize_record',
+          targetTable: 'case_records',
+          targetId: id,
+          metadata: { studentId: target.studentId, recordType: target.type },
+        }).catch(() => {})
+      }
+    }
     const updateStudent = (student: Student) => setStudents((prev) => prev.map((item) => item.id === student.id ? { ...student, updatedAt: todayParts().iso } : item))
     const createFeedback = (student: Student, type: 'stable' | 'help') => {
       const parts = todayParts()
-      setRecords((prev) => [{
+      const record: CaseRecord = {
         id: crypto.randomUUID(),
         studentId: student.id,
         date: parts.date,
@@ -699,17 +828,37 @@ export default function App() {
         createdBy: '普通班導師',
         createdAt: parts.iso,
         visibility: 'staff_limited',
-      }, ...prev])
+      }
+      setRecords((prev) => [record, ...prev])
+      if (isSchoolTestMode && currentActorId && currentSchoolId) {
+        void saveSchoolRecord(record, currentSchoolId, currentActorId).catch(() => {})
+      }
+      if (currentActorId && currentSchoolId) {
+        void createAuditLog({
+          actorId: currentActorId,
+          schoolId: currentSchoolId,
+          action: 'teacher_feedback_submit',
+          targetTable: 'case_records',
+          targetId: record.id,
+          metadata: { studentId: student.id, feedbackType: type },
+        }).catch(() => {})
+      }
       setTab('首頁')
     }
-    if (tab === '首頁') return <HomePage role={role} students={students} records={records} setTab={setTab} />
-    const saveIepGoal = (goal: IEPGoal) => setIepGoals((prev) => [goal, ...prev])
-    if (tab === '學生') return <StudentsPage role={role} students={students} records={records} iepGoals={iepGoals} setTab={setTab} createFeedback={createFeedback} />
-    if (tab === '紀錄') return <RecordsPage role={role} students={students} records={records} addRecord={addRecord} confirmRecord={confirmRecord} createFeedback={createFeedback} />
-    if (tab === 'IEP') return <IEPPage role={role} students={students} iepGoals={iepGoals} saveIepGoal={saveIepGoal} updateStudent={updateStudent} />
+    if (tab === '首頁') return <HomePage role={role} students={students} records={records} iepGoals={iepGoals} setTab={setTab} viewerId={auth.profile?.id} />
+    const saveIepGoal = (goal: IEPGoal) => {
+      setIepGoals((prev) => [goal, ...prev])
+      if (isSchoolTestMode && currentActorId && currentSchoolId) {
+        void saveSchoolIepGoal(goal, currentSchoolId, currentActorId).catch(() => {})
+      }
+    }
+    if (tab === '學生') return <StudentsPage role={role} students={students} records={records} iepGoals={iepGoals} setTab={setTab} createFeedback={createFeedback} viewerId={auth.profile?.id} schoolId={auth.profile?.school_id || ''} />
+    if (tab === '紀錄') return <RecordsPage role={role} students={students} records={records} addRecord={addRecord} confirmRecord={confirmRecord} createFeedback={createFeedback} viewerId={auth.profile?.id} schoolId={auth.profile?.school_id || ''} />
+    if (tab === 'IEP') return <IEPWorkflowPage role={role} students={students} iepGoals={iepGoals} saveIepGoal={saveIepGoal} updateStudent={(student) => { updateStudent(student); if (isSchoolTestMode && currentActorId && currentSchoolId) void saveAssessmentAdjustment(student.id, student.assessmentAdjustments, currentSchoolId, currentActorId).catch(() => {}) }} viewerId={auth.profile?.id} schoolId={auth.profile?.school_id || ''} />
     if (tab === '名單管理') return <RosterManagementPage role={role} actorId={auth.profile?.id || ''} schoolId={auth.profile?.school_id || ''} onRefresh={refreshSchoolData} />
-    return <ReportsPage role={role} students={students} records={records} iepGoals={iepGoals} />
-  }, [tab, role, students, records, iepGoals, auth.profile?.id, auth.profile?.school_id, refreshSchoolData])
+    if (tab === '妥善率檢查') return <ReadinessCheckPage role={role} viewerId={auth.profile?.id} schoolId={auth.profile?.school_id || ''} students={students} records={records} iepGoals={iepGoals} isSupabaseConfigured={isSupabaseConfigured} isLoggedIn={auth.isLoggedIn} />
+    return <ReportsPage role={role} students={students} records={records} iepGoals={iepGoals} viewerId={auth.profile?.id} schoolId={auth.profile?.school_id || ''} />
+  }, [tab, role, students, records, iepGoals, auth.profile?.id, auth.profile?.school_id, auth.isLoggedIn, refreshSchoolData])
 
   const handleReset = () => {
     resetDemoData()

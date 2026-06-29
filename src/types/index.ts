@@ -34,6 +34,10 @@ export interface Student {
   mainNeed?: string
   supportLevel?: string
   rosterStatus?: 'active' | 'inactive' | 'graduated' | 'transferred'
+  homeroomTeacherId?: string
+  specialTeacherId?: string
+  subjectTeacherIds?: string[]
+  guardianIds?: string[]
   homeroomTeacher: string
   specialTeacher: string
   disabilityCategory: string
