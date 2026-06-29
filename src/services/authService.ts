@@ -46,7 +46,9 @@ export async function signOut() {
 
 export async function getProfile(user: User) {
   if (!supabase) return null
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+  const { data, error } = await supabase.rpc('get_my_profile')
   if (error) throw error
-  return data as UserProfile | null
+  const profile = Array.isArray(data) ? data[0] : data
+  if (!profile || profile.id !== user.id) return null
+  return profile as UserProfile | null
 }

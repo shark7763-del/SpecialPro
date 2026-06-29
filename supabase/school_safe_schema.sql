@@ -178,6 +178,41 @@ as $$
   select role from public.profiles where id = auth.uid() and is_active = true limit 1;
 $$;
 
+create or replace function public.get_my_profile()
+returns table (
+  id uuid,
+  school_id uuid,
+  role text,
+  display_name text,
+  class_name text,
+  subject_name text,
+  is_active boolean,
+  created_at timestamptz,
+  updated_at timestamptz
+)
+language sql
+security definer
+stable
+set search_path = public
+set row_security = off
+as $$
+  select
+    p.id,
+    p.school_id,
+    p.role,
+    p.display_name,
+    p.class_name,
+    p.subject_name,
+    p.is_active,
+    p.created_at,
+    p.updated_at
+  from public.profiles p
+  where p.id = auth.uid()
+  limit 1;
+$$;
+
+grant execute on function public.get_my_profile() to authenticated;
+
 create or replace function public.is_school_staff()
 returns boolean
 language sql
