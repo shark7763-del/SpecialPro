@@ -636,6 +636,11 @@ function ReportsPage({ role, students, records, iepGoals, viewerId, schoolId }: 
   const [studentId, setStudentId] = useState(visible[0]?.id || '')
   const [type, setType] = useState('交接資料包')
   const [content, setContent] = useState('')
+  const presetButtons: Array<{ label: string; value: string }> = [
+    { label: '會議前資料包', value: '會議前資料包' },
+    { label: '交接資料包', value: '交接資料包' },
+    { label: 'IEP 檢討摘要', value: 'IEP 檢討摘要' },
+  ]
   const selected = students.find((student) => student.id === studentId) || visible[0]
 
   if (role === '普通班導師' || role === '科任老師' || role === '家長') return <main className="px-4"><p className="rounded-2xl bg-white p-5 text-slate-700 shadow-sm">此角色不提供完整匯出，請由特教老師確認資料使用範圍。</p></main>
@@ -664,6 +669,17 @@ function ReportsPage({ role, students, records, iepGoals, viewerId, schoolId }: 
         <div className="space-y-3 rounded-3xl bg-white p-5 shadow-sm">
           <p className="rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">請確認資料使用範圍，避免分享給無關人員。</p>
           <select value={studentId} onChange={(event) => setStudentId(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">{visible.map((student) => <option key={student.id} value={student.id}>{student.name}｜{student.className}</option>)}</select>
+          <div className="grid grid-cols-3 gap-2">
+            {presetButtons.map((item) => (
+              <button
+                key={item.value}
+                onClick={() => setType(item.value)}
+                className={`rounded-xl px-3 py-3 text-sm font-bold ${type === item.value ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
           <select value={type} onChange={(event) => setType(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">{reportTypes.map((item) => <option key={item}>{item}</option>)}</select>
           <button onClick={() => safeExport(produce)} className="w-full rounded-2xl bg-teal-600 px-5 py-4 text-lg font-black text-white">產生報表文字</button>
         </div>
