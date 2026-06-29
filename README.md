@@ -95,6 +95,10 @@ values (
 );
 ```
 
+更方便的做法是直接用這份範本：
+
+- [supabase/bootstrap_school_test.sql](./supabase/bootstrap_school_test.sql)
+
 ## 角色
 
 - `special_teacher`：特教導師
