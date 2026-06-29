@@ -6,11 +6,12 @@ values ('00000000-0000-0000-0000-000000000001', 'SpecialPro 測試學校')
 on conflict (id) do nothing;
 
 insert into public.profiles (
-  id, school_id, role, display_name, class_name, subject_name, is_active
+  id, school_id, email, role, display_name, class_name, subject_name, is_active
 ) values
   (
     'e915a310-cc50-4f37-9f1e-82e12a1cd268',
     '00000000-0000-0000-0000-000000000001',
+    'admin@specialpro.test',
     'admin',
     '系統管理員',
     null,
@@ -20,6 +21,7 @@ insert into public.profiles (
   (
     'd6092a92-7876-4417-af68-6658f6fde70f',
     '00000000-0000-0000-0000-000000000001',
+    'teacher@specialpro.test',
     'special_teacher',
     '林特教',
     null,
@@ -29,6 +31,7 @@ insert into public.profiles (
   (
     'b973e848-d055-4c78-856c-556c661f4761',
     '00000000-0000-0000-0000-000000000001',
+    'homeroom@specialpro.test',
     'homeroom_teacher',
     '陳導師',
     '801班',
@@ -38,6 +41,7 @@ insert into public.profiles (
   (
     'a2c185e1-26fc-4087-b6ee-9d4771bb2a1b',
     '00000000-0000-0000-0000-000000000001',
+    'parent@specialpro.test',
     'parent',
     '王媽媽',
     null,
@@ -47,6 +51,7 @@ insert into public.profiles (
 on conflict (id) do update
 set
   school_id = excluded.school_id,
+  email = excluded.email,
   role = excluded.role,
   display_name = excluded.display_name,
   class_name = excluded.class_name,

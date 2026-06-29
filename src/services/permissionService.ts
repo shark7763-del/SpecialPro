@@ -49,6 +49,10 @@ export function canExport(role: Role) {
   return role !== '家長'
 }
 
+export function canManageRoster(role: Role) {
+  return role === '系統管理員' || role === '特教組長'
+}
+
 export function parentSafeText(text: string) {
   return text
     .replaceAll('紅燈', '需要一起協助')

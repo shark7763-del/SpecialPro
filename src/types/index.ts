@@ -30,6 +30,10 @@ export interface Student {
   name: string
   className: string
   grade: number
+  seatNo?: string
+  mainNeed?: string
+  supportLevel?: string
+  rosterStatus?: 'active' | 'inactive' | 'graduated' | 'transferred'
   homeroomTeacher: string
   specialTeacher: string
   disabilityCategory: string
@@ -45,6 +49,33 @@ export interface Student {
   sensitiveNotes: string
   createdAt: string
   updatedAt: string
+}
+
+export interface RosterProfile {
+  id: string
+  schoolId: string | null
+  email: string | null
+  role: RoleCode
+  displayName: string
+  className: string | null
+  subjectName: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface StudentTeacherAccessRow {
+  studentId: string
+  teacherId: string
+  accessType: 'special' | 'homeroom' | 'subject' | 'viewer'
+  isActive: boolean
+}
+
+export interface StudentGuardianRow {
+  studentId: string
+  guardianId: string
+  relationship: string | null
+  isActive: boolean
 }
 
 export interface Record {

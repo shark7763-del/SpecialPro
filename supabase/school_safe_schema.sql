@@ -9,6 +9,7 @@ create table if not exists public.schools (
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   school_id uuid references public.schools(id),
+  email text unique,
   role text not null check (role in ('special_teacher','special_chair','homeroom_teacher','subject_teacher','parent','admin')),
   display_name text not null,
   class_name text,
@@ -24,6 +25,10 @@ create table if not exists public.students (
   display_code text not null,
   class_name text not null,
   grade text,
+  seat_no text,
+  main_need text,
+  support_level text,
+  roster_status text default 'active' check (roster_status in ('active','inactive','graduated','transferred')),
   homeroom_teacher_id uuid references public.profiles(id),
   special_teacher_id uuid references public.profiles(id),
   status text check (status in ('stable','observe','support','urgent')),
@@ -50,6 +55,7 @@ create table if not exists public.student_guardians (
   student_id uuid references public.students(id) on delete cascade,
   guardian_id uuid references public.profiles(id) on delete cascade,
   relationship text,
+  is_active boolean default true,
   primary key(student_id, guardian_id)
 );
 
@@ -57,6 +63,7 @@ create table if not exists public.student_teacher_access (
   student_id uuid references public.students(id) on delete cascade,
   teacher_id uuid references public.profiles(id) on delete cascade,
   access_type text check (access_type in ('special','homeroom','subject','viewer')),
+  is_active boolean default true,
   primary key(student_id, teacher_id)
 );
 
@@ -178,6 +185,19 @@ as $$
   select role from public.profiles where id = auth.uid() and is_active = true limit 1;
 $$;
 
+create or replace function public.lookup_auth_user_id_by_email(input_email text)
+returns uuid
+language sql
+security definer
+stable
+set search_path = public, auth
+set row_security = off
+as $$
+  select id from auth.users where lower(email) = lower(input_email) limit 1;
+$$;
+
+grant execute on function public.lookup_auth_user_id_by_email(text) to authenticated;
+
 create or replace function public.get_my_profile()
 returns table (
   id uuid,
@@ -291,7 +311,7 @@ drop policy if exists "profiles admin write" on public.profiles;
 create policy "profiles read self and school admins" on public.profiles for select to authenticated using (
   id = auth.uid() or (school_id = public.current_school_id() and public.current_role() in ('admin','special_chair'))
 );
-create policy "profiles admin write" on public.profiles for all to authenticated using (public.current_role() = 'admin') with check (public.current_role() = 'admin');
+create policy "profiles admin write" on public.profiles for all to authenticated using (public.current_role() in ('admin','special_chair')) with check (public.current_role() in ('admin','special_chair'));
 
 drop policy if exists "schools read own" on public.schools;
 create policy "schools read own" on public.schools for select to authenticated using (id = public.current_school_id());
@@ -301,7 +321,7 @@ drop policy if exists "students write special" on public.students;
 drop policy if exists "students delete admin chair" on public.students;
 create policy "students select access" on public.students for select to authenticated using (public.can_access_student(id));
 create policy "students write special" on public.students for insert to authenticated with check (school_id = public.current_school_id() and public.current_role() in ('special_teacher','special_chair','admin'));
-create policy "students update special" on public.students for update to authenticated using (school_id = public.current_school_id() and public.current_role() in ('special_teacher','special_chair','admin')) with check (school_id = public.current_school_id());
+create policy "students update special" on public.students for update to authenticated using (school_id = public.current_school_id() and public.current_role() in ('special_teacher','special_chair','admin')) with check (school_id = public.current_school_id() and public.current_role() in ('special_teacher','special_chair','admin'));
 create policy "students delete admin chair" on public.students for delete to authenticated using (school_id = public.current_school_id() and public.current_role() in ('special_chair','admin'));
 
 drop policy if exists "sensitive select special only" on public.student_sensitive_profiles;

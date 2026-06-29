@@ -71,10 +71,56 @@ supabase/school_safe_schema.sql
 5. 在 `profiles` 為每個 auth user 建立角色資料。
 6. 建立測試學生，建議 `display_code` 使用 `王○安`，不要使用完整姓名。
 7. 用 `student_teacher_access` 或 `student_guardians` 綁定可存取學生。
-8. GitHub Actions Variables 設定：
+8. 如果要啟用名單管理功能，再執行 `supabase/roster_management_migration.sql`。
+9. GitHub Actions Variables 設定：
    - `VITE_APP_MODE=school_test`
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
+
+## 名單管理流程
+
+1. 先用 `admin` 或 `special_chair` 登入。
+2. 到首頁點 `名單管理`。
+3. 在「學生名單」新增學生，優先用 `display_code`，不要輸入完整姓名與完整敏感資料。
+4. 在「教職員 / 家長帳號」先到 Supabase Authentication 建帳號，再回來建立 profile。
+5. 在「學生授權綁定」把學生綁給特教導師、普通班導師、科任老師與家長。
+6. 在「CSV 批次匯入」先預覽，再確認匯入。
+
+## CSV 匯入欄位
+
+```text
+student_display_code, grade, class_name, seat_no, main_need, support_level, special_teacher_email, homeroom_teacher_email, subject_teacher_emails, parent_emails
+```
+
+注意：
+
+- `subject_teacher_emails` 與 `parent_emails` 可用 `;` 或 `,` 分隔多個 email。
+- 匯入前會先檢查 email 是否已有 profile。
+- 如果學生已存在，系統會標示錯誤，不會直接匯入。
+
+## 帳號建立流程
+
+### 手動模式
+
+1. 到 Supabase Authentication 建立 email 帳號。
+2. 回到 SpecialPro 後台建立 profile。
+3. profile 建立後再做學生綁定。
+
+### 邀請模式
+
+- 目前保留 TODO，未來可接 Supabase Edge Function 做邀請建立帳號。
+
+## 綁定流程
+
+- `special_teacher` / `homeroom_teacher` / `subject_teacher` 會寫入 `student_teacher_access`。
+- `parent` 會寫入 `student_guardians`。
+- 解除綁定不刪資料，改為 `is_active = false`。
+
+## 測試資料注意事項
+
+- 校園測試版只使用測試資料。
+- 建議使用 `王○安` 這類 `display_code`。
+- 不要輸入完整姓名、身分證字號、完整病歷、完整醫療診斷或非必要敏感資料。
 
 ## 第一個 Admin Profile
 
@@ -102,6 +148,14 @@ values (
 如果你要一次把登入函式、學校、帳號、學生、IEP、評量調整與紀錄全補齊，直接跑：
 
 - [supabase/bootstrap_school_test_full.sql](./supabase/bootstrap_school_test_full.sql)
+
+如果你要直接擴增一批學生名單，直接跑：
+
+- [supabase/sample_student_list_10.sql](./supabase/sample_student_list_10.sql)
+
+如果你已經有既有資料庫，只想補名單管理欄位與權限，直接跑：
+
+- [supabase/roster_management_migration.sql](./supabase/roster_management_migration.sql)
 
 如果資料庫裡還留著舊 demo 表結構，先跑：
 

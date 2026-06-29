@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './index.css'
 import { PrivacyNotice } from './components/PrivacyNotice'
 import { SafetyModeBanner } from './components/SafetyModeBanner'
@@ -6,10 +6,11 @@ import { UpdatePrompt } from './components/UpdatePrompt'
 import { isSchoolTestMode } from './config/appMode'
 import { useAuth } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
+import { RosterManagementPage } from './pages/RosterManagementPage'
 import { generateFormalRecord, generateIEPDraft, generateParentMessage, generateSemesterSummary, generateTeacherTipCard } from './services/aiService'
 import { signOut } from './services/authService'
 import { buildReport, downloadText, studentsToCsv } from './services/exportService'
-import { canConfirmRecord, canEditRecords, canSeeSensitive, parentSafeText, roleCodeToDisplay, visibleRecords, visibleStudents } from './services/permissionService'
+import { canConfirmRecord, canEditRecords, canManageRoster, canSeeSensitive, parentSafeText, roleCodeToDisplay, visibleRecords, visibleStudents } from './services/permissionService'
 import { loadSchoolData } from './services/schoolDataService'
 import { loadIepGoals, loadRecords, loadStudents, resetDemoData, saveIepGoals, saveRecords, saveStudents } from './services/storageService'
 import { isSupabaseConfigured } from './services/supabaseClient'
@@ -18,7 +19,7 @@ import { recordTypes, reportTypes, roles, usageTags } from './utils/constants'
 import { getTaipeiDateString, getTaipeiISOString, getTaipeiTimeString } from './utils/date'
 import type { IEPDraft, IEPGoal, Record as CaseRecord, RecordType, Role, Student, StudentStatus, UsageTag } from './types'
 
-type Tab = '首頁' | '學生' | '紀錄' | 'IEP' | '報表'
+type Tab = '首頁' | '學生' | '紀錄' | 'IEP' | '報表' | '名單管理'
 
 const tabs: Tab[] = ['首頁', '學生', '紀錄', 'IEP', '報表']
 
@@ -214,6 +215,7 @@ function HomePage({ role, students, records, setTab }: { role: Role; students: S
         <div className="mt-3 grid grid-cols-2 gap-2">
           {['情緒紀錄', '親師溝通', '課堂觀察', '普通班回饋'].map((item) => <button key={item} onClick={() => setTab('紀錄')} className="rounded-xl bg-teal-50 px-3 py-3 text-sm font-bold text-teal-800">{item}</button>)}
         </div>
+        {canManageRoster(role) && <button onClick={() => setTab('名單管理')} className="mt-3 w-full rounded-2xl bg-slate-900 px-5 py-4 text-lg font-black text-white">名單管理</button>}
       </section>
       <Section title="今天最重要 3 件事">
         <div className="space-y-2">{['王○安 IEP 會議紀錄尚未確認', '李○庭 家長訊息待回覆', '陳○恩 段考評量調整待確認'].map((item) => <div key={item} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{item}</div>)}</div>
@@ -615,14 +617,24 @@ export default function App() {
 
   useEffect(() => {
     if (!isSchoolTestMode || !auth.isLoggedIn) return
-    loadSchoolData().then((data) => {
-      setStudents(data.students)
-      setRecords(data.records)
-      setIepGoals(data.iepGoals)
-    }).catch((error: unknown) => {
-      setSyncResult({ ok: false, message: error instanceof Error ? error.message : '讀取 Supabase 資料失敗。' })
-    })
+    void (async () => {
+      try {
+        const data = await loadSchoolData()
+        setStudents(data.students)
+        setRecords(data.records)
+        setIepGoals(data.iepGoals)
+      } catch (error) {
+        setSyncResult({ ok: false, message: error instanceof Error ? error.message : '讀取 Supabase 資料失敗。' })
+      }
+    })()
   }, [auth.isLoggedIn])
+
+  const refreshSchoolData = useCallback(async () => {
+    const data = await loadSchoolData()
+    setStudents(data.students)
+    setRecords(data.records)
+    setIepGoals(data.iepGoals)
+  }, [])
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -695,8 +707,9 @@ export default function App() {
     if (tab === '學生') return <StudentsPage role={role} students={students} records={records} iepGoals={iepGoals} setTab={setTab} createFeedback={createFeedback} />
     if (tab === '紀錄') return <RecordsPage role={role} students={students} records={records} addRecord={addRecord} confirmRecord={confirmRecord} createFeedback={createFeedback} />
     if (tab === 'IEP') return <IEPPage role={role} students={students} iepGoals={iepGoals} saveIepGoal={saveIepGoal} updateStudent={updateStudent} />
+    if (tab === '名單管理') return <RosterManagementPage role={role} actorId={auth.profile?.id || ''} schoolId={auth.profile?.school_id || ''} onRefresh={refreshSchoolData} />
     return <ReportsPage role={role} students={students} records={records} iepGoals={iepGoals} />
-  }, [tab, role, students, records, iepGoals])
+  }, [tab, role, students, records, iepGoals, auth.profile?.id, auth.profile?.school_id, refreshSchoolData])
 
   const handleReset = () => {
     resetDemoData()

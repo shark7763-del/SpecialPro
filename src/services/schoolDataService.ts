@@ -6,6 +6,10 @@ interface DbStudent {
   display_code: string
   class_name: string
   grade: string | null
+  seat_no: string | null
+  main_need: string | null
+  support_level: string | null
+  roster_status: 'active' | 'inactive' | 'graduated' | 'transferred' | null
   status: 'stable' | 'observe' | 'support' | 'urgent'
   main_needs: string[]
   iep_focus: string[]
@@ -49,6 +53,10 @@ export async function loadSchoolData() {
         name: student.display_code,
         className: student.class_name,
         grade: Number(student.grade || 0),
+        seatNo: student.seat_no ?? '',
+        mainNeed: student.main_need ?? student.main_needs?.[0] ?? '',
+        supportLevel: student.support_level ?? '',
+        rosterStatus: student.roster_status ?? 'active',
         homeroomTeacher: '',
         specialTeacher: '',
         disabilityCategory: '',
