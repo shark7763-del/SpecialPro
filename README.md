@@ -183,11 +183,55 @@ values (
 - 名單管理：`admin` / `special_chair` 可建立學生、profile、授權綁定與 CSV 匯入。
 - 妥善率檢查：`admin` / `special_chair` 可查看校園小範圍測試前的安全檢查結果。
 
+## 目前已完成
+
+- 名單管理。
+- 學生名單。
+- profile 建立。
+- 學生授權綁定。
+- CSV 批次匯入。
+- 妥善率檢查頁。
+- 今日待辦。
+- 30 秒快速記。
+- IEP 流程化頁面（`IEPWorkflowPage`）。
+- parent-safe 與 staff-limited 顯示。
+
+## 仍是 Demo / TODO
+
+- 真正 OpenAI API 尚未接入，目前仍是 AI 模擬函式。
+- PDF 正式匯出尚未完成，目前以可列印 HTML / 文字匯出為主。
+- Edge Function 邀請帳號尚未完成。
+- RLS 實際攻防測試仍需使用 Supabase 測試帳號逐項驗證。
+- `demo` 模式仍使用 localStorage 與 mock data。
+- 匯出 audit log 目前會記錄 `export_case_package`、`export_iep_package`、`export_parent_safe_package`、`export_transition_package`、`export_teacher_tip_card`、`export_assessment_adjustment`。
+
 ## 明確警告
 
 demo 模式不可輸入真實學生資料。
 
 校園安全測試版仍屬內部小範圍測試，請僅輸入測試授權範圍內資料，避免輸入完整身分證字號、完整病歷、非必要醫療資訊或與教學支持無關的敏感內容。
+
+## 小範圍校園測試前檢查清單
+
+1. 已用 `school_test` 模式登入。
+2. `profiles.role` 已正確建立。
+3. `students` 與授權關聯已建立。
+4. `audit_logs` 可寫入。
+5. 家長端只顯示 parent-safe 內容。
+6. 普通班導師與科任老師看不到完整敏感紀錄。
+7. CSV 匯入已先預覽，且沒有錯誤。
+8. 匯出前已完成個資提醒確認。
+9. IEP 已走草稿、編輯、確認流程。
+10. 名單資料僅使用去識別化測試內容。
+
+## 測試角色建議帳號
+
+- `admin`
+- `special_chair`
+- `special_teacher`
+- `homeroom_teacher`
+- `subject_teacher`
+- `parent`
 
 ## 目前仍是 Demo / 待正式化項目
 

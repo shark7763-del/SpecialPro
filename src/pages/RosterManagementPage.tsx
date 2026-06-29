@@ -17,6 +17,7 @@ interface Props {
 interface CsvPreviewRow {
   raw: Record<string, string>
   errors: string[]
+  bindingCount: number
   student?: {
     displayCode: string
     grade: string
@@ -48,18 +49,65 @@ const bindingOptions: Array<{ label: string; value: StudentTeacherAccessRow['acc
 ]
 
 function parseCsvText(text: string) {
-  return text
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => line.split(',').map((cell) => cell.trim().replace(/^"|"$/g, '')))
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let inQuotes = false
+
+  const pushCell = () => {
+    row.push(cell)
+    cell = ''
+  }
+
+  const pushRow = () => {
+    if (row.length || cell.length) {
+      pushCell()
+      rows.push(row)
+    }
+    row = []
+    cell = ''
+  }
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    const next = text[index + 1]
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        cell += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+    if (char === ',' && !inQuotes) {
+      pushCell()
+      continue
+    }
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && next === '\n') index += 1
+      pushRow()
+      continue
+    }
+    cell += char
+  }
+  pushRow()
+  return rows
+    .map((currentRow) => currentRow.map((item) => item.trim()))
+    .filter((currentRow) => currentRow.some((item) => item.length > 0))
 }
 
 function splitEmails(value: string) {
-  return value
+  const unique = new Map<string, string>()
+  value
     .split(/[;,]/)
     .map((item) => item.trim())
     .filter(Boolean)
+    .forEach((item) => {
+      const lower = item.toLowerCase()
+      if (!unique.has(lower)) unique.set(lower, item)
+    })
+  return [...unique.values()]
 }
 
 function isEmail(value: string) {
@@ -119,6 +167,18 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
   const [homeroomFilter, setHomeroomFilter] = useState<'all' | 'missing'>('all')
   const [guardianFilter, setGuardianFilter] = useState<'all' | 'missing'>('all')
 
+  const csvStats = useMemo(() => {
+    const totalRows = csvPreview.length
+    const errorRows = csvPreview.filter((row) => row.errors.length > 0).length
+    const bindingRows = csvPreview.reduce((count, row) => count + row.bindingCount, 0)
+    return {
+      totalRows,
+      validRows: totalRows - errorRows,
+      errorRows,
+      bindingRows,
+    }
+  }, [csvPreview])
+
   const reload = async () => {
     setLoading(true)
     try {
@@ -147,7 +207,7 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
     const guardianMissing = students.filter((student) => !guardians.some((guardian) => guardian.studentId === student.id && guardian.isActive)).length
     const disabledProfiles = profiles.filter((profile) => !profile.isActive).length
     const recentStudentCount = students.filter((student) => new Date(student.createdAt).getTime() >= Date.now() - 7 * 24 * 60 * 60 * 1000).length
-    const recentBindingCount = auditLogs.filter((log) => /bind_student_/.test(log.action) && new Date(log.createdAt).getTime() >= Date.now() - 7 * 24 * 60 * 60 * 1000).length
+    const recentBindingCount = auditLogs.filter((log) => /(bind_teacher_to_student|bind_parent_to_student|unbind_user_from_student)/.test(log.action) && new Date(log.createdAt).getTime() >= Date.now() - 7 * 24 * 60 * 60 * 1000).length
     return { specialMissing, homeroomMissing, guardianMissing, disabledProfiles, recentStudentCount, recentBindingCount }
   }, [students, teacherAccess, guardians, profiles, auditLogs])
 
@@ -300,6 +360,7 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
       if (expectedHeaders.some((item, index) => headers[index] !== item)) {
         throw new Error('CSV 欄位順序不正確，請依範例欄位匯入。')
       }
+      const seenStudents = new Set<string>()
       const preview = dataRows.map((row) => {
         const record = Object.fromEntries(expectedHeaders.map((key, index) => [key, row[index] || '']))
         const errors: string[] = []
@@ -307,7 +368,10 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
         const grade = record.grade.trim()
         const className = record.class_name.trim()
         if (!displayCode || !grade || !className) errors.push('學生 display_code、年級、班級為必填。')
-        if (students.some((student) => student.name === displayCode && student.className === className)) errors.push('學生已存在。')
+        const studentKey = `${displayCode.toLowerCase()}|${grade.toLowerCase()}|${className.toLowerCase()}`
+        if (seenStudents.has(studentKey)) errors.push(`CSV 內重複學生：${displayCode}｜${className}`)
+        seenStudents.add(studentKey)
+        if (students.some((student) => student.name.toLowerCase() === displayCode.toLowerCase() && student.className.toLowerCase() === className.toLowerCase())) errors.push('學生已存在。')
         const specialTeacher = profiles.find((profile) => profile.email?.toLowerCase() === record.special_teacher_email.toLowerCase()) || null
         const homeroomTeacher = profiles.find((profile) => profile.email?.toLowerCase() === record.homeroom_teacher_email.toLowerCase()) || null
         if (record.special_teacher_email && !isEmail(record.special_teacher_email)) errors.push(`特教導師 email 格式錯誤：${record.special_teacher_email}`)
@@ -322,9 +386,24 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
         const parents = parentEmails.map((email) => profiles.find((profile) => profile.email?.toLowerCase() === email.toLowerCase())).filter(Boolean) as RosterProfile[]
         subjectEmails.forEach((email, index) => { if (!subjectTeachers[index]) errors.push(`找不到科任老師帳號：${email}`) })
         parentEmails.forEach((email, index) => { if (!parents[index]) errors.push(`找不到家長帳號：${email}`) })
+        if (specialTeacher && specialTeacher.role === 'parent') errors.push(`角色不符：${record.special_teacher_email} 是家長帳號`)
+        if (homeroomTeacher && homeroomTeacher.role === 'parent') errors.push(`角色不符：${record.homeroom_teacher_email} 是家長帳號`)
+        subjectTeachers.forEach((profile) => {
+          if (!['subject_teacher', 'special_teacher', 'special_chair', 'homeroom_teacher', 'admin'].includes(profile.role)) errors.push(`角色不符：${profile.email} 不能綁成科任老師`)
+        })
+        parents.forEach((profile) => {
+          if (profile.role !== 'parent') errors.push(`角色不符：${profile.email} 不能綁成家長`)
+        })
+        const bindingCount = new Set([
+          specialTeacher?.id,
+          homeroomTeacher?.id,
+          ...subjectTeachers.map((profile) => profile.id),
+          ...parents.map((profile) => profile.id),
+        ].filter(Boolean)).size
         return {
           raw: record,
           errors,
+          bindingCount,
           student: { displayCode, grade, className, seatNo: record.seat_no.trim(), mainNeed: record.main_need.trim(), supportLevel: record.support_level.trim() },
           specialTeacher,
           homeroomTeacher,
@@ -334,6 +413,19 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
       })
       setCsvPreview(preview)
       setCsvError('')
+      void createAuditLog({
+        actorId,
+        schoolId,
+        action: 'csv_preview',
+        targetTable: 'students',
+        targetId: 'csv_preview',
+        metadata: {
+          total_rows: preview.length,
+          error_rows: preview.filter((item) => item.errors.length > 0).length,
+          duplicate_students: preview.filter((item) => item.errors.some((error) => error.includes('重複學生'))).length,
+          missing_profiles: preview.filter((item) => item.errors.some((error) => error.includes('找不到'))).length,
+        },
+      }).catch(() => {})
     } catch (previewError) {
       setCsvError(previewError instanceof Error ? previewError.message : '預覽失敗。')
       setCsvPreview([])
@@ -391,7 +483,13 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
         action: 'bulk_import_roster',
         targetTable: 'students',
         targetId: 'bulk_import',
-        metadata: { imported: successCount },
+        metadata: {
+          total_rows: csvPreview.length,
+          imported_students: successCount,
+          teacher_bindings: teacherBindCount,
+          parent_bindings: guardianBindCount,
+          error_rows: csvPreview.filter((row) => row.errors.length > 0).length,
+        },
       })
       setMessage(`已匯入 ${successCount} 位學生，${teacherBindCount} 筆老師綁定，${guardianBindCount} 筆家長綁定。`)
       setCsvInput('')
@@ -427,9 +525,9 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
         <div className="rounded-2xl bg-white p-4 shadow-sm"><p className="text-sm text-slate-500">最近 7 天新增綁定數</p><p className="text-2xl font-black text-teal-700">{studentStats.recentBindingCount}</p></div>
       </div>
       <div className="rounded-2xl bg-white p-3 shadow-sm">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {['學生名單', '教職員 / 家長帳號', '學生授權綁定', 'CSV 批次匯入'].map((item) => (
-            <button key={item} onClick={() => setTab(item as RosterTab)} className={`rounded-xl px-3 py-3 text-sm font-bold ${tab === item ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-700'}`}>{item}</button>
+            <button key={item} onClick={() => setTab(item as RosterTab)} className={`min-h-11 rounded-xl px-3 py-3 text-sm font-bold ${tab === item ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-700'}`}>{item}</button>
           ))}
         </div>
       </div>
@@ -471,7 +569,7 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="hidden overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm md:block">
             <table className="min-w-[1100px] text-left text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
@@ -508,6 +606,33 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
               </tbody>
             </table>
           </div>
+          <div className="space-y-3 md:hidden">
+            {filteredStudents.map((student) => {
+              const special = teacherAccess.some((item) => item.studentId === student.id && item.accessType === 'special' && item.isActive)
+              const homeroom = teacherAccess.some((item) => item.studentId === student.id && item.accessType === 'homeroom' && item.isActive)
+              const subjectCount = teacherAccess.filter((item) => item.studentId === student.id && item.accessType === 'subject' && item.isActive).length
+              const parentCount = guardians.filter((item) => item.studentId === student.id && item.isActive).length
+              return (
+                <div key={student.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-lg font-black text-slate-900">{student.name}</p>
+                      <p className="mt-1 text-sm text-slate-500">{student.grade}｜{student.className}</p>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{student.rosterStatus || 'active'}</span>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-700">主要需求：{student.mainNeed || student.mainNeeds[0] || '—'}</p>
+                  <p className="mt-2 text-sm text-slate-700">特教導師：{special ? '已綁定' : '未綁定'}｜普通班導師：{homeroom ? '已綁定' : '未綁定'}</p>
+                  <p className="mt-2 text-sm text-slate-700">科任老師：{subjectCount}｜家長：{parentCount}</p>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <button onClick={() => { setStudentForm({ id: student.id, displayCode: student.name, grade: String(student.grade || ''), className: student.className, seatNo: student.seatNo || '', mainNeed: student.mainNeed || '', supportLevel: student.supportLevel || '', rosterStatus: student.rosterStatus || 'active' }); setTab('學生名單') }} className="min-h-11 rounded-xl bg-slate-100 px-3 py-3 text-sm font-bold text-slate-700">編輯</button>
+                    <button onClick={() => { setBindingForm((prev) => ({ ...prev, studentId: student.id })); setTab('學生授權綁定') }} className="min-h-11 rounded-xl bg-teal-50 px-3 py-3 text-sm font-bold text-teal-700">綁定</button>
+                    <button onClick={() => void deactivateStudent(student)} className="min-h-11 rounded-xl bg-rose-50 px-3 py-3 text-sm font-bold text-rose-700">停用</button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </section>
       )}
 
@@ -532,11 +657,27 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
               <button onClick={saveProfile} className="rounded-2xl bg-teal-600 px-5 py-4 font-black text-white">建立 / 更新 profile</button>
             </div>
           </div>
-          <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="hidden overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm md:block">
             <table className="min-w-[900px] text-left text-sm">
               <thead className="bg-slate-50 text-slate-600"><tr>{['姓名', 'Email', '角色', '班級', '專長科目', '狀態', '操作'].map((head) => <th key={head} className="px-3 py-3">{head}</th>)}</tr></thead>
               <tbody>{profiles.map((profile) => <tr key={profile.id} className="border-t border-slate-100"><td className="px-3 py-3 font-bold">{profile.displayName}</td><td className="px-3 py-3">{profile.email || '—'}</td><td className="px-3 py-3">{roleCodeToDisplay(profile.role)}</td><td className="px-3 py-3">{profile.className || '—'}</td><td className="px-3 py-3">{profile.subjectName || '—'}</td><td className="px-3 py-3">{profile.isActive ? '啟用' : '停用'}</td><td className="px-3 py-3"><button onClick={() => void toggleProfileActive(profile)} className="rounded-xl bg-slate-100 px-3 py-2 font-bold text-slate-700">{profile.isActive ? '停用' : '啟用'}</button></td></tr>)}</tbody>
             </table>
+          </div>
+          <div className="space-y-3 md:hidden">
+            {profiles.map((profile) => (
+              <div key={profile.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-lg font-black text-slate-900">{profile.displayName}</p>
+                    <p className="mt-1 text-sm text-slate-500">{profile.email || '—'}</p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${badgeClass(profile.isActive)}`}>{profile.isActive ? '啟用' : '停用'}</span>
+                </div>
+                <p className="mt-3 text-sm text-slate-700">角色：{roleCodeToDisplay(profile.role)}</p>
+                <p className="mt-1 text-sm text-slate-700">班級：{profile.className || '—'}｜專長：{profile.subjectName || '—'}</p>
+                <button onClick={() => void toggleProfileActive(profile)} className="mt-3 min-h-11 w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700">{profile.isActive ? '停用' : '啟用'}</button>
+              </div>
+            ))}
           </div>
         </section>
       )}
@@ -565,10 +706,10 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
           <div className="grid gap-4">
             <div className="rounded-3xl bg-white p-5 shadow-sm">
               <h4 className="font-black text-slate-900">特教 / 普通班 / 科任 綁定</h4>
-              <div className="mt-3 space-y-2">{teacherAccess.map((item) => {
+              <div className="mt-3 space-y-2 md:space-y-0">{teacherAccess.map((item) => {
                 const student = studentIndex.get(item.studentId)
                 const profile = profiles.find((profile) => profile.id === item.teacherId)
-                return <div key={`${item.studentId}-${item.teacherId}`} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3 text-sm"><div><b>{student?.name}</b>｜{profile?.displayName || item.teacherId}｜{item.accessType}</div><button onClick={() => void upsertTeacherAccess({ schoolId, actorId, studentId: item.studentId, teacherId: item.teacherId, accessType: item.accessType, isActive: false }).then(() => reload())} className="rounded-xl bg-rose-50 px-3 py-2 font-bold text-rose-700">解除綁定</button></div>
+                return <div key={`${item.studentId}-${item.teacherId}`} className="rounded-2xl bg-slate-50 p-3 text-sm md:flex md:items-center md:justify-between"><div><b>{student?.name}</b>｜{profile?.displayName || item.teacherId}｜{item.accessType}</div><button onClick={() => void upsertTeacherAccess({ schoolId, actorId, studentId: item.studentId, teacherId: item.teacherId, accessType: item.accessType, isActive: false }).then(() => reload())} className="mt-2 min-h-11 rounded-xl bg-rose-50 px-3 py-2 font-bold text-rose-700 md:mt-0">解除綁定</button></div>
               })}</div>
             </div>
             <div className="rounded-3xl bg-white p-5 shadow-sm">
@@ -576,7 +717,7 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
               <div className="mt-3 space-y-2">{guardians.map((item) => {
                 const student = studentIndex.get(item.studentId)
                 const profile = profiles.find((profile) => profile.id === item.guardianId)
-                return <div key={`${item.studentId}-${item.guardianId}`} className="flex items-center justify-between rounded-2xl bg-slate-50 p-3 text-sm"><div><b>{student?.name}</b>｜{profile?.displayName || item.guardianId}｜{item.relationship || '家長'}</div><button onClick={() => void upsertGuardianAccess({ schoolId, actorId, studentId: item.studentId, guardianId: item.guardianId, relationship: item.relationship || '家長', isActive: false }).then(() => reload())} className="rounded-xl bg-rose-50 px-3 py-2 font-bold text-rose-700">解除綁定</button></div>
+                return <div key={`${item.studentId}-${item.guardianId}`} className="rounded-2xl bg-slate-50 p-3 text-sm md:flex md:items-center md:justify-between"><div><b>{student?.name}</b>｜{profile?.displayName || item.guardianId}｜{item.relationship || '家長'}</div><button onClick={() => void upsertGuardianAccess({ schoolId, actorId, studentId: item.studentId, guardianId: item.guardianId, relationship: item.relationship || '家長', isActive: false }).then(() => reload())} className="mt-2 min-h-11 rounded-xl bg-rose-50 px-3 py-2 font-bold text-rose-700 md:mt-0">解除綁定</button></div>
               })}</div>
             </div>
           </div>
@@ -589,6 +730,14 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
             <h3 className="text-lg font-black text-slate-900">CSV 匯入</h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">欄位：student_display_code, grade, class_name, seat_no, main_need, support_level, special_teacher_email, homeroom_teacher_email, subject_teacher_emails, parent_emails</p>
             <button onClick={() => downloadText('specialpro_roster_template.csv', ['student_display_code,grade,class_name,seat_no,main_need,support_level,special_teacher_email,homeroom_teacher_email,subject_teacher_emails,parent_emails', '王○安,七年級,701,5,學習支持,一般支持,special@example.com,homeroom@example.com,subject1@example.com;subject2@example.com,parent@example.com'].join('\n'), 'text/csv;charset=utf-8')} className="mt-3 rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-700">下載範本</button>
+            {csvPreview.length > 0 && (
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-500">總筆數</p><p className="text-xl font-black text-slate-900">{csvStats.totalRows}</p></div>
+                <div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-500">可匯入筆數</p><p className="text-xl font-black text-emerald-700">{csvStats.validRows}</p></div>
+                <div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-500">錯誤筆數</p><p className="text-xl font-black text-rose-700">{csvStats.errorRows}</p></div>
+                <div className="rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-500">綁定總數</p><p className="text-xl font-black text-teal-700">{csvStats.bindingRows}</p></div>
+              </div>
+            )}
             <textarea value={csvInput} onChange={(event) => setCsvInput(event.target.value)} rows={8} className="mt-4 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6" placeholder="貼上 CSV 內容" />
             <div className="mt-3 flex gap-2">
               <button onClick={buildPreview} className="rounded-xl bg-slate-900 px-4 py-3 font-bold text-white">解析預覽</button>
@@ -604,7 +753,33 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
             {csvError && <p className="mt-3 rounded-2xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{csvError}</p>}
           </div>
           {csvPreview.length > 0 && (
-            <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <>
+            <div className="space-y-3 md:hidden">
+              {csvPreview.map((row, index) => (
+                <details key={index} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <summary className="cursor-pointer list-none">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-lg font-black text-slate-900">{row.student?.displayCode || row.raw.student_display_code}</p>
+                        <p className="text-sm text-slate-500">{row.student?.className || row.raw.class_name}</p>
+                      </div>
+                      <span className={`rounded-full px-3 py-1 text-xs font-bold ${row.errors.length ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>錯誤 {row.errors.length}</span>
+                    </div>
+                  </summary>
+                  <div className="mt-3 space-y-2 text-sm text-slate-700">
+                    <p>年級：{row.student?.grade || row.raw.grade}</p>
+                    <p>綁定人數：{row.bindingCount}</p>
+                    <p>主要需求：{row.student?.mainNeed || row.raw.main_need}</p>
+                    <p>支持層級：{row.student?.supportLevel || row.raw.support_level}</p>
+                    <p className="text-rose-700">錯誤：{row.errors.join('；') || '—'}</p>
+                  </div>
+                </details>
+              ))}
+              <div className="rounded-3xl bg-white p-4 shadow-sm">
+                <button onClick={importCsv} className="min-h-11 rounded-2xl bg-teal-600 px-5 py-4 font-black text-white">確認匯入</button>
+              </div>
+            </div>
+            <div className="hidden overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm md:block">
               <table className="min-w-[1200px] text-left text-sm">
                 <thead className="bg-slate-50 text-slate-600">
                   <tr>{['學生', '年級', '班級', '座號', '主要需求', '支持層級', '錯誤'].map((head) => <th key={head} className="px-3 py-3">{head}</th>)}</tr>
@@ -624,9 +799,10 @@ export function RosterManagementPage({ role, actorId, schoolId, onRefresh }: Pro
                 </tbody>
               </table>
               <div className="p-4">
-                <button onClick={importCsv} className="rounded-2xl bg-teal-600 px-5 py-4 font-black text-white">確認匯入</button>
+                <button onClick={importCsv} className="min-h-11 rounded-2xl bg-teal-600 px-5 py-4 font-black text-white">確認匯入</button>
               </div>
             </div>
+            </>
           )}
         </section>
       )}

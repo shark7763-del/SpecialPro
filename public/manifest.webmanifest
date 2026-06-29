@@ -1,9 +1,9 @@
 {
-  "name": "SpecialPro｜特教導師減壓戰情室",
+  "name": "SpecialPro 特教行政戰情室",
   "short_name": "SpecialPro",
-  "description": "特教行政減量工具：老師快速記，系統自動整理。",
-  "start_url": ".",
-  "scope": ".",
+  "description": "協助特教老師管理學生資料、IEP、會議紀錄、家長溝通與評鑑資料的專業系統。",
+  "start_url": "/SpecialPro/",
+  "scope": "/SpecialPro/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f6f7f4",

@@ -2,6 +2,7 @@
   "name": "specialpro",
   "private": true,
   "version": "0.0.0",
+  "homepage": "https://shark7763-del.github.io/SpecialPro/",
   "type": "module",
   "scripts": {
     "dev": "vite",

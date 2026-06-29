@@ -84,6 +84,7 @@ export function parentSafeText(text: string) {
     .replaceAll('情緒爆發', '情緒調節需要支持')
     .replaceAll('攻擊', '出現不適當的肢體反應')
     .replaceAll('不配合', '目前需要引導')
+    .replaceAll('診斷細節', '學習支持需求')
     .replaceAll('優先處理', '需要一起協助')
 }
 

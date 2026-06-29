@@ -328,9 +328,10 @@ export async function setProfileActive(input: {
   await createAuditLog({
     actorId: input.actorId,
     schoolId: input.schoolId,
-    action: input.isActive ? 'activate_profile' : 'deactivate_profile',
+    action: 'update_profile',
     targetTable: 'profiles',
     targetId: input.id,
+    metadata: { isActive: input.isActive },
   })
   return data as DbProfile
 }
@@ -354,7 +355,7 @@ export async function upsertTeacherAccess(input: {
   await createAuditLog({
     actorId: input.actorId,
     schoolId: input.schoolId,
-    action: input.isActive ? 'bind_student_teacher' : 'unbind_student_teacher',
+    action: input.isActive ? 'bind_teacher_to_student' : 'unbind_user_from_student',
     targetTable: 'student_teacher_access',
     targetId: `${input.studentId}:${input.teacherId}`,
     metadata: { accessType: input.accessType, isActive: input.isActive },
@@ -381,7 +382,7 @@ export async function upsertGuardianAccess(input: {
   await createAuditLog({
     actorId: input.actorId,
     schoolId: input.schoolId,
-    action: input.isActive ? 'bind_student_guardian' : 'unbind_student_guardian',
+    action: input.isActive ? 'bind_parent_to_student' : 'unbind_user_from_student',
     targetTable: 'student_guardians',
     targetId: `${input.studentId}:${input.guardianId}`,
     metadata: { relationship: input.relationship, isActive: input.isActive },
