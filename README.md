@@ -99,6 +99,14 @@ values (
 
 - [supabase/bootstrap_school_test.sql](./supabase/bootstrap_school_test.sql)
 
+如果你要一次把登入函式、學校、帳號、學生、IEP、評量調整與紀錄全補齊，直接跑：
+
+- [supabase/bootstrap_school_test_full.sql](./supabase/bootstrap_school_test_full.sql)
+
+如果資料庫裡還留著舊 demo 表結構，先跑：
+
+- [supabase/reset_school_test_schema.sql](./supabase/reset_school_test_schema.sql)
+
 ## 角色
 
 - `special_teacher`：特教導師
